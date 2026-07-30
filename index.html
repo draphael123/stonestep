@@ -42,7 +42,14 @@
   .row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:13px 4px; border-top:1px solid rgba(74,65,102,.4); }
   .row label { font-size:15px; }
   .row input[type=range] { width:150px; }
-  #gear { pointer-events:auto; cursor:pointer; }
+  #gear, #menu { pointer-events:auto; cursor:pointer; }
+  .levelgrid { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:4px 0 20px; }
+  .lvlbtn { border:1px solid #4a4166; color:var(--ink); background:rgba(18,16,28,.5); border-radius:9px; padding:9px 0; font-family:inherit; font-size:13px; cursor:pointer; text-align:center; line-height:1.35; }
+  .lvlbtn:hover { background:rgba(230,180,92,.14); }
+  .lvlbtn .n { font-size:16px; }
+  .lvlbtn.done { border-color:#6f8a3f; color:#bcd08a; }
+  .lvlbtn.locked { opacity:.4; cursor:default; }
+  .lvlbtn.locked:hover { background:rgba(18,16,28,.5); }
 </style>
 </head>
 <body>
@@ -59,6 +66,7 @@
     <span class="chip"><b>Z</b> undo</span>
     <span class="chip"><b>R</b> restart</span>
     <span class="chip" id="gear"><b>⚙</b> settings</span>
+    <span class="chip" id="menu"><b>☰</b> levels</span>
   </div>
 </div>
 <div class="moves" id="moves">moves 0</div>
@@ -72,7 +80,8 @@
 <div class="screen" id="title">
   <div class="panel">
     <h1>STONESTEP</h1>
-    <p class="tag">Push, climb, and stack your way out of the woods.</p>
+    <p class="tag">Push, climb, and root your way out of the woods.</p>
+    <div class="levelgrid" id="levelSelect"></div>
     <div class="ctrlgrid">
       <b>← ↑ ↓ →</b><span>move (relative to the view)</span>
       <b>Q / E</b><span>turn the camera</span>
@@ -80,7 +89,7 @@
       <b>Z / R</b><span>undo / restart</span>
     </div>
     <div class="btns">
-      <button id="playBtn" class="btn primary">Play</button>
+      <button id="playBtn" class="btn primary">Continue</button>
       <button id="setBtn" class="btn">Settings</button>
     </div>
   </div>
@@ -108,28 +117,60 @@ import * as THREE from 'three';
 // plane, whose top surface is y = 0). Walls and blocks each fill one cell.
 const LEVELS = [
   {
-    name: 'Foothold · 1',
-    hint: 'Push the stone against the ledge and climb it. It starts on the wrong side — walk around it first.',
-    // Teaches push + climb. The insight: the block sits on the WRONG side of you
-    // relative to the ledge, so you must walk AROUND it to push it the right way.
+    name: 'First step · 1',
+    hint: 'Push the stone to the ledge, then climb up and up to the gate.',
+    // Onboarding: the push -> climb -> climb -> exit loop on one axis.
+    hero: [1, 0, 1],
+    exit: [4, 2, 1],
+    blocks: [[2, 0, 1]],
+    walls: [[4,0,1],[4,1,1]],
+  },
+  {
+    name: 'Foothold · 2',
+    hint: 'The stone is on the wrong side of you. Walk around it, then push it to the ledge and climb.',
     hero: [3, 0, 1],
     exit: [6, 2, 1],
     blocks: [[2, 0, 1]],
     walls: (()=>{ const w=[]; for (const z of [0,1,2]) for (const y of [0,1]) w.push([6,y,z]); return w; })(),
   },
   {
-    name: 'Turn the corner · 2',
+    name: 'Turn the corner · 3',
     hint: 'The gate faces into the room. Press Q or E to turn the view, then push the stone toward it and climb.',
-    // Teaches depth + the camera. The ledge faces INTO the scene, so you push the
-    // block along Z; you'll want Q/E to line the shot up.
     hero: [1, 0, 1],
     exit: [4, 2, 4],
     blocks: [[4, 0, 1]],
     walls: [[4, 0, 4], [4, 1, 4]],
   },
   {
-    name: 'Out of the sun · 3',
-    hint: 'Golden ground is sunlit — you can only cross it in shade. Push a stone beside a sunlit tile to shade it.',
+    name: 'Pull it free · 4',
+    hint: 'This stone is jammed against the wall — you cannot get behind it. Hold Shift and press toward it to PULL it free, then push it to the ledge.',
+    bnd: { x0:1, x1:6, z0:1, z1:3 },
+    hero: [2, 0, 1],
+    exit: [6, 2, 1],
+    blocks: [[1, 0, 1]],
+    walls: [[6,0,1],[6,1,1]],
+  },
+  {
+    name: 'Take root · 5',
+    hint: 'Move a seed, then leave it still a moment — it roots into permanent ground. A loose stone you would just push; a ROOTED one you can climb.',
+    bnd: { x0:1, x1:4, z0:0, z1:2 },
+    hero: [1, 0, 1],
+    exit: [3, 1, 1],
+    seeds: [[2, 0, 1]],
+    walls: [],
+  },
+  {
+    name: 'The grove · 6',
+    hint: 'Same idea, other way around: push the seed the other direction, root it, and climb.',
+    bnd: { x0:1, x1:5, z0:1, z1:3 },
+    hero: [4, 0, 2],
+    exit: [2, 1, 2],
+    seeds: [[3, 0, 2]],
+    walls: [],
+  },
+  {
+    name: 'Out of the sun · 7',
+    hint: 'Golden ground is sunlit — cross it only in shade. Push a stone beside a sunlit tile to shade it.',
     bnd: { x0:1, x1:5, z0:1, z1:3 },
     hero: [1, 0, 2],
     exit: [5, 0, 2],
@@ -138,23 +179,14 @@ const LEVELS = [
     walls: [[1,0,3],[2,0,3],[3,0,3],[4,0,3],[5,0,3],[4,0,1],[5,0,1]],
   },
   {
-    name: 'Take root · 4',
-    hint: 'Move a seed, then leave it a moment — it takes root into solid ground. You can climb a rooted stone (but a loose one you would just push).',
-    bnd: { x0:1, x1:4, z0:0, z1:2 },
-    hero: [1, 0, 1],
-    exit: [3, 1, 1],
-    seeds: [[2, 0, 1]],
-    walls: [],
-  },
-  {
-    name: 'Rooted bridge · 5',
-    hint: 'One rooted stone can do two jobs: shade the sunlit tile AND be the step you climb. Root it in the right place.',
-    bnd: { x0:1, x1:4, z0:1, z1:3 },
+    name: 'Rooted bridge · 8',
+    hint: 'One rooted stone, two jobs: it shades the sunlit tile AND becomes the step you climb. A loose stone would slide away — root it.',
+    bnd: { x0:1, x1:5, z0:1, z1:3 },
     hero: [1, 0, 2],
     exit: [4, 1, 2],
     seeds: [[2, 0, 2]],
     sunTiles: [[3, 2]],
-    walls: [[4,0,1],[4,0,3]],
+    walls: [[4,0,1],[4,0,3],[5,0,1],[5,0,3]],
   },
 ];
 
@@ -394,6 +426,25 @@ function makeMotes(cx,cz,span){
   return { points:new THREE.Points(geo,mat), base, geo, top:0.3+3.4 };
 }
 
+function makeLeaves(cx,cz,span){
+  const N=44, geo=new THREE.BufferGeometry(), pos=new Float32Array(N*3), base=[];
+  for (let i=0;i<N;i++){ const x=cx+(Math.random()-0.5)*(span+9), y=Math.random()*7, z=cz+(Math.random()-0.5)*(span+9);
+    pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z; base.push({x,z,y0:y,ph:Math.random()*6.28,sp:0.4+Math.random()*0.5}); }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.PointsMaterial({ color:'#93ab5c', size:0.17, transparent:true, opacity:0.85, depthWrite:false });
+  return { points:new THREE.Points(geo,mat), geo, base };
+}
+function makeButterfly(rng){
+  const g=new THREE.Group();
+  const col=['#e6a24a','#d4537e','#e6d15c','#8ab0e0'][Math.floor(rng()*4)];
+  const mat=new THREE.MeshBasicMaterial({ color:col, side:THREE.DoubleSide, fog:false });
+  const wl=new THREE.Group(), wr=new THREE.Group();
+  const wlm=new THREE.Mesh(new THREE.CircleGeometry(0.09,7), mat); wlm.position.x=-0.06; wl.add(wlm);
+  const wrm=new THREE.Mesh(new THREE.CircleGeometry(0.09,7), mat); wrm.position.x= 0.06; wr.add(wrm);
+  g.add(wl,wr); g.userData={wl,wr};
+  return g;
+}
+
 function makeSky(){
   const c=document.createElement('canvas'); c.width=8; c.height=256;
   const g=c.getContext('2d'); const grd=g.createLinearGradient(0,0,0,256);
@@ -429,6 +480,11 @@ function buildEnvironment(cx,cz,rng){
   // birds circling overhead
   for (let i=0;i<4;i++){ const b=makeBird(); env.add(b);
     world.birds.push({ grp:b, cx, cz, rad:6+rng()*7, h:7+rng()*4, sp:0.12+rng()*0.1, ph:rng()*6.28, flap:6+rng()*3 }); }
+
+  // drifting leaves + fluttering butterflies over the clearing
+  world.leaves = makeLeaves(cx,cz,8); env.add(world.leaves.points);
+  for (let i=0;i<3;i++){ const bf=makeButterfly(rng); env.add(bf);
+    world.butterflies.push({ grp:bf, cx:cx+(rng()-0.5)*3, cz:cz+(rng()-0.5)*3, rx:1.2+rng()*1.5, rz:1.2+rng()*1.5, sp:0.5+rng()*0.4, ph:rng()*6.28, flap:16+rng()*6 }); }
 }
 
 function buildRoom(){
@@ -495,7 +551,7 @@ function clearWorld(){
 function loadLevel(i){
   clearWorld();
   const def = LEVELS[i];
-  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], sunSet:new Set(), sunTiles:[], shadeSet:new Set(), name:def.name };
+  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], leaves:null, butterflies:[], sunSet:new Set(), sunTiles:[], shadeSet:new Set(), name:def.name };
   world._sunTilesRaw = def.sunTiles || [];
   scene.add(world.root);
 
@@ -696,6 +752,7 @@ function commit(before, kind){
   h.moveTo = heroTarget.clone();
   h.moveT = 0;
   h.moveDur = kind==='climb' ? 0.34 : kind==='pull' ? 0.30 : 0.26;
+  h.willLand = (h.moveTo.y !== h.moveFrom.y);   // a drop or step-up ends in a landing
   h.act = kind || 'walk';
   h.actStart = performance.now();
   anim = true;
@@ -710,6 +767,7 @@ function checkWin(){
     won = true;
     h.winStart = performance.now();
     SFX.play('win');
+    markComplete(levelIndex);
     const at = levelIndex;
     setTimeout(()=>{ if (won && levelIndex===at) document.getElementById('win').classList.add('show'); }, 950);
   }
@@ -785,7 +843,7 @@ function frame(now){
       h.mesh.position.lerpVectors(h.moveFrom, h.moveTo, e);
       moving=true;
     } else h.mesh.position.copy(heroTarget);
-    if (anim && !moving) anim=false;
+    if (anim && !moving){ anim=false; if (h.willLand){ h.landAt=now; h.willLand=false; } }
 
     // ---- knight animation (procedural) ----
     const P = h.mesh.userData.parts;
@@ -837,6 +895,9 @@ function frame(now){
     P.body.rotation.x = L(P.body.rotation.x, tLean,  k);
     P.body.position.y = L(P.body.position.y, tBodyY, sk);
     P.body.rotation.y = L(P.body.rotation.y, tTwist, won?0.4:k);
+    if (h.landAt){ const dl=(now-h.landAt)/1000;
+      if (dl<0.18){ const e=Math.sin(dl/0.18*Math.PI); P.body.scale.set(1+e*0.12, 1-e*0.20, 1+e*0.12); }
+      else { h.landAt=0; P.body.scale.set(1,1,1); } }
 
     // gentle exit pulse, swaying foliage, drifting motes
     const t=now/1000;
@@ -863,6 +924,23 @@ function frame(now){
         bd.grp.rotation.y = -ang;
         const f=Math.sin(t*bd.flap)*0.6; bd.grp.userData.wl.rotation.z=f; bd.grp.userData.wr.rotation.z=-f;
       }
+      if (world.leaves){ const arr=world.leaves.geo.attributes.position.array, bs=world.leaves.base;
+        for (let i=0;i<bs.length;i++){ const b=bs[i]; let y=((b.y0 - t*b.sp)%7+7)%7;
+          arr[i*3]=b.x+Math.sin(t*1.2+b.ph)*0.6; arr[i*3+1]=y; arr[i*3+2]=b.z+Math.cos(t*0.9+b.ph)*0.4; }
+        world.leaves.geo.attributes.position.needsUpdate=true;
+      }
+      for (const bf of world.butterflies){
+        const a=t*bf.sp+bf.ph;
+        bf.grp.position.set(bf.cx+Math.sin(a)*bf.rx+Math.sin(a*2.3)*0.4, 0.5+Math.abs(Math.sin(a*1.7))*0.8, bf.cz+Math.cos(a*1.3)*bf.rz);
+        bf.grp.rotation.y=-a;
+        const f=Math.sin(t*bf.flap)*1.1; bf.grp.userData.wl.rotation.z=f+0.3; bf.grp.userData.wr.rotation.z=-f-0.3;
+      }
+      // rooting telegraph: a seed that has moved will root if left — pulse its sprout
+      for (const s of world.solids.values()){
+        if (s.type==='seed' && s.hasMoved && s.mesh.children[0]){
+          s.mesh.children[0].scale.setScalar(1 + Math.sin(t*6)*0.35 + 0.35);
+        }
+      }
     }
   }
   renderer.render(scene,camera);
@@ -885,8 +963,36 @@ window.__stonestep = {
   get level(){ return levelIndex; },
 };
 
+// ---------- Progression ----------
+const progress = new Set();
+try { JSON.parse(localStorage.getItem('stonestep_progress')||'[]').forEach(i=>progress.add(i)); } catch(e){}
+function saveProgress(){ try { localStorage.setItem('stonestep_progress', JSON.stringify([...progress])); } catch(e){} }
+function maxUnlocked(){ let m=0; while (progress.has(m)) m++; return Math.min(m, LEVELS.length-1); } // first incomplete
+function markComplete(i){ progress.add(i); saveProgress(); }
+
 // ---------- UI wiring ----------
 const $ = id=>document.getElementById(id);
+
+function buildLevelSelect(){
+  const grid=$('levelSelect'); grid.innerHTML='';
+  const unlocked=maxUnlocked();
+  LEVELS.forEach((lv,i)=>{
+    const done=progress.has(i), locked=i>unlocked;
+    const b=document.createElement('button');
+    b.className='lvlbtn'+(done?' done':'')+(locked?' locked':'');
+    b.innerHTML='<div class="n">'+(done?'✓':(i+1))+'</div>'+lv.name.replace(/ · \d+$/,'');
+    if (!locked) b.addEventListener('click', ()=>startLevel(i));
+    grid.appendChild(b);
+  });
+}
+function startLevel(i){
+  levelIndex=i; loadLevel(i);
+  started=true; SFX.resume();
+  $('title').classList.add('hidden'); $('settings').classList.add('hidden');
+  $('hint').classList.remove('hide');
+}
+function showMenu(){ buildLevelSelect(); $('title').classList.remove('hidden'); }
+
 function applySettings(){
   $('volRange').value = Math.round(settings.volume*100);
   $('rmChk').checked = settings.reduceMotion;
@@ -896,11 +1002,13 @@ function applySettings(){
 $('volRange').addEventListener('input', e=>{ settings.volume=(+e.target.value)/100; SFX.setVolume(settings.volume); SFX.resume(); SFX.play('walk'); saveSettings(); });
 $('rmChk').addEventListener('change', e=>{ settings.reduceMotion=e.target.checked; saveSettings(); });
 $('invChk').addEventListener('change', e=>{ settings.invert=e.target.checked; saveSettings(); });
-$('playBtn').addEventListener('click', ()=>{ started=true; SFX.resume(); $('title').classList.add('hidden'); $('hint').classList.remove('hide'); });
+$('playBtn').addEventListener('click', ()=>{ startLevel(maxUnlocked()); });
 $('setBtn').addEventListener('click', ()=>{ $('settings').classList.remove('hidden'); });
 $('setClose').addEventListener('click', ()=>{ $('settings').classList.add('hidden'); });
 $('gear').addEventListener('click', ()=>{ $('settings').classList.remove('hidden'); });
+$('menu').addEventListener('click', ()=>{ showMenu(); });
 applySettings();
+buildLevelSelect();
 </script>
 </body>
 </html>
