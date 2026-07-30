@@ -27,6 +27,22 @@
   .overlay p { color:#b9a888; font-size:15px; }
   .overlay .go { margin-top:6px; border:1px solid var(--gold); color:var(--gold); background:transparent; border-radius:9px; padding:10px 22px; font-family:inherit; font-size:15px; cursor:pointer; letter-spacing:1px; }
   .overlay .go:hover { background:rgba(230,180,92,.12); }
+  .screen { position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; background:rgba(8,12,10,.5); backdrop-filter:blur(3px); transition:opacity .45s ease; }
+  .screen.hidden { opacity:0; pointer-events:none; }
+  .panel { background:rgba(20,22,26,.92); border:1px solid #4a4166; border-radius:16px; padding:30px 34px; max-width:460px; width:calc(100% - 40px); text-align:center; color:var(--ink); box-shadow:0 24px 70px rgba(0,0,0,.55); }
+  .panel h1 { font-size:42px; letter-spacing:6px; font-weight:normal; }
+  .panel h2 { font-size:24px; letter-spacing:2px; font-weight:normal; margin-bottom:8px; }
+  .panel .tag { color:#b9a888; margin:8px 0 20px; font-size:15px; }
+  .ctrlgrid { display:grid; grid-template-columns:auto 1fr; gap:7px 16px; text-align:left; font-size:14px; color:#cdbfa2; margin:0 auto 22px; max-width:320px; }
+  .ctrlgrid b { color:var(--gold); font-weight:normal; }
+  .btns { display:flex; gap:10px; justify-content:center; margin-top:6px; }
+  .btn { border:1px solid #4a4166; color:var(--ink); background:rgba(18,16,28,.5); border-radius:10px; padding:10px 24px; font-family:inherit; font-size:15px; cursor:pointer; letter-spacing:1px; }
+  .btn:hover { background:rgba(230,180,92,.14); }
+  .btn.primary { border-color:var(--gold); color:var(--gold); }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:13px 4px; border-top:1px solid rgba(74,65,102,.4); }
+  .row label { font-size:15px; }
+  .row input[type=range] { width:150px; }
+  #gear { pointer-events:auto; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -42,6 +58,7 @@
     <span class="chip"><b>Q</b>/<b>E</b> turn</span>
     <span class="chip"><b>Z</b> undo</span>
     <span class="chip"><b>R</b> restart</span>
+    <span class="chip" id="gear"><b>⚙</b> settings</span>
   </div>
 </div>
 <div class="moves" id="moves">moves 0</div>
@@ -50,6 +67,33 @@
   <h2 id="winTitle">SOLVED</h2>
   <p id="winSub">The stones settle beneath you.</p>
   <button class="go" id="goNext">descend ↓</button>
+</div>
+
+<div class="screen" id="title">
+  <div class="panel">
+    <h1>STONESTEP</h1>
+    <p class="tag">Push, climb, and stack your way out of the woods.</p>
+    <div class="ctrlgrid">
+      <b>← ↑ ↓ →</b><span>move (relative to the view)</span>
+      <b>Q / E</b><span>turn the camera</span>
+      <b>Shift + dir</b><span>pull a block</span>
+      <b>Z / R</b><span>undo / restart</span>
+    </div>
+    <div class="btns">
+      <button id="playBtn" class="btn primary">Play</button>
+      <button id="setBtn" class="btn">Settings</button>
+    </div>
+  </div>
+</div>
+
+<div class="screen hidden" id="settings">
+  <div class="panel">
+    <h2>Settings</h2>
+    <div class="row"><label for="volRange">Sound volume</label><input type="range" id="volRange" min="0" max="100" step="1"></div>
+    <div class="row"><label for="rmChk">Reduce motion</label><input type="checkbox" id="rmChk"></div>
+    <div class="row"><label for="invChk">Invert up / down</label><input type="checkbox" id="invChk"></div>
+    <div class="btns"><button id="setClose" class="btn primary">Done</button></div>
+  </div>
 </div>
 
 <script type="importmap">
@@ -88,8 +132,8 @@ const LEVELS = [
 // ---------- Scene ----------
 const app = document.getElementById('app');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#191627');
-scene.fog = new THREE.FogExp2('#141126', 0.016);
+scene.background = new THREE.Color('#c9dde0');
+scene.fog = new THREE.FogExp2('#cfe0d4', 0.018);
 
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -104,9 +148,10 @@ let orientAnim = 0;        // animated yaw (radians) that eases toward orient
 let camDist = 12, camHeight = 9;   // set per level from its size
 
 // ---------- Lighting ----------
-scene.add(new THREE.AmbientLight('#7a789c', 0.9));
-const key = new THREE.DirectionalLight('#dfe6ff', 0.8);
-key.position.set(6, 12, 4); key.castShadow = true;
+scene.add(new THREE.AmbientLight('#a6bcae', 0.7));
+scene.add(new THREE.HemisphereLight('#d6ecff', '#38492f', 0.55));
+const key = new THREE.DirectionalLight('#fff0c8', 1.15);
+key.position.set(8, 14, 6); key.castShadow = true;
 key.shadow.mapSize.set(1024,1024);
 key.shadow.camera.left=-14; key.shadow.camera.right=14;
 key.shadow.camera.top=14; key.shadow.camera.bottom=-14;
@@ -127,14 +172,21 @@ function addTorch(x,y,z){
 }
 
 // ---------- Materials ----------
-const matWall = new THREE.MeshStandardMaterial({ color:'#3a3350', roughness:0.95, metalness:0.0 });
-const matWallTop = new THREE.MeshStandardMaterial({ color:'#463d5e', roughness:0.95 });
+const matWall = new THREE.MeshStandardMaterial({ color:'#7a746a', roughness:1.0, metalness:0.0 });
+const matWallTop = new THREE.MeshStandardMaterial({ color:'#5f6b45', roughness:1.0 });
 const matBlock = new THREE.MeshStandardMaterial({ color:'#836b4a', roughness:0.8 });
 const matBlockTop = new THREE.MeshStandardMaterial({ color:'#9c815b', roughness:0.8 });
 const matRune = new THREE.MeshStandardMaterial({ color:'#e6b45c', emissive:'#e6a13a', emissiveIntensity:0.9, roughness:0.5 });
-const matFloorA = new THREE.MeshStandardMaterial({ color:'#2c2740', roughness:0.98 });
-const matFloorB = new THREE.MeshStandardMaterial({ color:'#342e4c', roughness:0.98 });
-const matRoom   = new THREE.MeshStandardMaterial({ color:'#2a2540', roughness:0.98 });
+const matFloorA = new THREE.MeshStandardMaterial({ color:'#426139', roughness:0.98 });
+const matFloorB = new THREE.MeshStandardMaterial({ color:'#4b6d42', roughness:0.98 });
+const matRoom   = new THREE.MeshStandardMaterial({ color:'#6a6252', roughness:1.0 });
+const matTrunk  = new THREE.MeshStandardMaterial({ color:'#5a4632', roughness:0.9 });
+const matLeaf   = new THREE.MeshStandardMaterial({ color:'#3c6a37', roughness:0.85 });
+const matLeaf2  = new THREE.MeshStandardMaterial({ color:'#4f8443', roughness:0.85 });
+const matRock   = new THREE.MeshStandardMaterial({ color:'#7b756c', roughness:1.0 });
+const matFern   = new THREE.MeshStandardMaterial({ color:'#4a7d3f', roughness:0.9 });
+const matMush   = new THREE.MeshStandardMaterial({ color:'#e08a58', emissive:'#ff8a3a', emissiveIntensity:0.55, roughness:0.6 });
+const matStem   = new THREE.MeshStandardMaterial({ color:'#ece3cf', roughness:0.85 });
 const steel  = new THREE.MeshStandardMaterial({ color:'#9aa3b5', metalness:0.55, roughness:0.42 });
 const steelD = new THREE.MeshStandardMaterial({ color:'#6b7488', metalness:0.55, roughness:0.5 });
 const darkM  = new THREE.MeshStandardMaterial({ color:'#22262f', metalness:0.3, roughness:0.7 });
@@ -151,6 +203,41 @@ let moves = 0;
 let levelIndex = 0;
 let history = [];
 let won = false;
+let started = false;
+
+// ---------- Settings + sound ----------
+const settings = { volume:0.5, reduceMotion:false, invert:false };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('stonestep_settings')||'{}')); } catch(e){}
+function saveSettings(){ try { localStorage.setItem('stonestep_settings', JSON.stringify(settings)); } catch(e){} }
+
+const SFX = (()=>{
+  let ctx, master;
+  function ensure(){
+    if (!ctx){ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return false;
+      ctx=new AC(); master=ctx.createGain(); master.gain.value=settings.volume; master.connect(ctx.destination); }
+    if (ctx.state==='suspended') ctx.resume();
+    return true;
+  }
+  function tone(freq,dur,type,gain,when){
+    if (!ensure()) return;
+    const t0=ctx.currentTime+(when||0), o=ctx.createOscillator(), g=ctx.createGain();
+    o.type=type||'sine'; o.frequency.value=freq;
+    g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(gain||0.3,t0+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dur+0.03);
+  }
+  return {
+    resume(){ ensure(); },
+    setVolume(v){ if(master) master.gain.value=v; },
+    play(kind){
+      if (kind==='walk') tone(196,0.09,'triangle',0.09);
+      else if (kind==='push'){ tone(90,0.2,'sine',0.32); tone(150,0.1,'square',0.05); }
+      else if (kind==='pull') tone(120,0.17,'sine',0.22);
+      else if (kind==='climb'){ tone(240,0.1,'triangle',0.15); tone(340,0.12,'triangle',0.13,0.06); }
+      else if (kind==='win'){ [523,659,784,1046].forEach((f,i)=>tone(f,0.32,'triangle',0.2,i*0.12)); }
+    }
+  };
+})();
 
 const K = (x,y,z)=>x+','+y+','+z;
 
@@ -176,15 +263,24 @@ function limb(w,h,d, px,py,pz, mat){
   pivot.add(m); return pivot;
 }
 
+function makeLeg(px){
+  // hip pivot -> thigh, then knee pivot -> shin + foot (so it can bend)
+  const hip = new THREE.Group(); hip.position.set(px,0.32,0);
+  const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.17,0.13), steelD); thigh.position.y=-0.085; hip.add(thigh);
+  const knee = new THREE.Group(); knee.position.y=-0.17; hip.add(knee);
+  const shin = new THREE.Mesh(new THREE.BoxGeometry(0.115,0.15,0.12), steelD); shin.position.y=-0.075; knee.add(shin);
+  const foot = new THREE.Mesh(new THREE.BoxGeometry(0.13,0.06,0.19), darkM); foot.position.set(0,-0.16,0.04); knee.add(foot);
+  return { hip, knee };
+}
+
 function makeHero(){
   const g = new THREE.Group();
   const body = new THREE.Group(); g.add(body);
 
-  const legL = limb(0.12,0.30,0.13, -0.09,0.30,0, steelD);
-  const legR = limb(0.12,0.30,0.13,  0.09,0.30,0, steelD);
+  const legL = makeLeg(-0.09), legR = makeLeg(0.09);
   const armL = limb(0.10,0.30,0.11, -0.24,0.62,0, steel);
   const armR = limb(0.10,0.30,0.11,  0.24,0.62,0, steel);
-  body.add(legL, legR, armL, armR);
+  body.add(legL.hip, legR.hip, armL, armR);
 
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.34,0.36,0.24), steel); torso.position.y = 0.46; body.add(torso);
   const tabard = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.30,0.02), crestM); tabard.position.set(0,0.44,0.125); body.add(tabard);
@@ -210,31 +306,145 @@ function makeExit(x,y,z){
   ring.rotation.x = -Math.PI/2; ring.position.y = 0.04; g.add(ring);
   const light = new THREE.PointLight('#ffd79a', 2.2, 8, 2.0);
   light.position.y = 0.8; g.add(light);
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34,0.52,2.6,18,1,true),
+    new THREE.MeshBasicMaterial({ color:'#ffe6b0', transparent:true, opacity:0.13, depthWrite:false, side:THREE.DoubleSide, blending:THREE.AdditiveBlending }));
+  beam.position.y = 1.3; g.add(beam);
   g.position.set(x, y, z);
   world.root.add(g);
   world._exitPad = pad; world._exitRing = ring;
   return g;
 }
 
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+function makeTree(scale, rng){
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12*scale,0.17*scale,1.0*scale,7), matTrunk);
+  trunk.position.y = 0.5*scale; trunk.castShadow = true; g.add(trunk);
+  const crown = new THREE.Group(); crown.position.y = 1.0*scale; g.add(crown);
+  for (let i=0;i<3;i++){
+    const c = new THREE.Mesh(new THREE.ConeGeometry((0.72-i*0.16)*scale,0.66*scale,8), (i%2)?matLeaf2:matLeaf);
+    c.position.y = i*0.42*scale; c.castShadow = true; crown.add(c);
+  }
+  g.userData.crown = crown; g.userData.sway = 0.05;
+  return g;
+}
+function makeTuft(){
+  const g = new THREE.Group();
+  for (let i=0;i<4;i++){ const bl=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.22,4), matLeaf2);
+    bl.position.set((Math.random()-0.5)*0.16,0.11,(Math.random()-0.5)*0.16); bl.rotation.z=(Math.random()-0.5)*0.5; g.add(bl); }
+  g.userData.crown = g; g.userData.sway = 0.10;
+  return g;
+}
+function makeRock(rng){ const m=new THREE.Mesh(new THREE.DodecahedronGeometry(0.22+rng()*0.22,0), matRock);
+  m.position.y=0.16; m.rotation.set(rng()*3,rng()*3,rng()*3); m.castShadow=true; return m; }
+function makeMushroom(){ const g=new THREE.Group();
+  const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.055,0.18,6), matStem); stem.position.y=0.09; g.add(stem);
+  const cap=new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8,0,Math.PI*2,0,Math.PI*0.55), matMush); cap.position.y=0.19; g.add(cap); return g; }
+function makeFern(){ const g=new THREE.Group();
+  for (let i=0;i<5;i++){ const a=i/5*Math.PI*2; const fr=new THREE.Mesh(new THREE.ConeGeometry(0.06,0.42,4), matFern);
+    fr.position.set(Math.cos(a)*0.07,0.2,Math.sin(a)*0.07); fr.rotation.set(0.6*Math.cos(a),0,0.6*Math.sin(a)); g.add(fr); }
+  g.userData.crown = g; g.userData.sway = 0.08; return g; }
+function makeMotes(cx,cz,span){
+  const N=70, geo=new THREE.BufferGeometry(), pos=new Float32Array(N*3), base=[];
+  for (let i=0;i<N;i++){ const x=cx+(Math.random()-0.5)*(span+4), y=0.3+Math.random()*3.4, z=cz+(Math.random()-0.5)*(span+4);
+    pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z; base.push({x,y,z,ph:Math.random()*6.28,sp:0.15+Math.random()*0.25}); }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.PointsMaterial({ color:'#ffe9a8', size:0.09, transparent:true, opacity:0.85, depthWrite:false, blending:THREE.AdditiveBlending });
+  return { points:new THREE.Points(geo,mat), base, geo, top:0.3+3.4 };
+}
+
+function makeSky(){
+  const c=document.createElement('canvas'); c.width=8; c.height=256;
+  const g=c.getContext('2d'); const grd=g.createLinearGradient(0,0,0,256);
+  grd.addColorStop(0,'#86b0d4'); grd.addColorStop(0.55,'#b8d3d8'); grd.addColorStop(1,'#dbe6d2');
+  g.fillStyle=grd; g.fillRect(0,0,8,256);
+  const tex=new THREE.CanvasTexture(c);
+  return new THREE.Mesh(new THREE.SphereGeometry(62,24,16),
+    new THREE.MeshBasicMaterial({ map:tex, side:THREE.BackSide, fog:false, depthWrite:false }));
+}
+function makeBird(){
+  const g=new THREE.Group();
+  const mat=new THREE.MeshBasicMaterial({ color:'#33333b', side:THREE.DoubleSide, fog:false });
+  const wl=new THREE.Group(); const wlm=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.02,0.18),mat); wlm.position.x=-0.25; wl.add(wlm);
+  const wr=new THREE.Group(); const wrm=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.02,0.18),mat); wrm.position.x= 0.25; wr.add(wrm);
+  const body=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.06,0.3),mat);
+  g.add(wl,wr,body); g.userData={wl,wr};
+  return g;
+}
+function buildEnvironment(cx,cz,rng){
+  const env=new THREE.Group(); world.root.add(env);
+  const dome=makeSky(); dome.position.set(cx,0,cz); env.add(dome);
+  const ground=new THREE.Mesh(new THREE.CircleGeometry(56,44),
+    new THREE.MeshStandardMaterial({ color:'#3b5734', roughness:1 }));
+  ground.rotation.x=-Math.PI/2; ground.position.set(cx,-0.08,cz); ground.receiveShadow=true; env.add(ground);
+  // distant tree line surrounding the clearing
+  for (let i=0;i<46;i++){
+    const a=i/46*Math.PI*2 + (rng()-0.5)*0.13, rad=16+rng()*11, s=1.8+rng()*3;
+    const px=cx+Math.cos(a)*rad, pz=cz+Math.sin(a)*rad;
+    const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.12*s,0.17*s,1.2*s,6), matTrunk); tr.position.set(px,0.3*s,pz); env.add(tr);
+    const cone=new THREE.Mesh(new THREE.ConeGeometry(1.0*s,2.8*s,7), (rng()<0.5)?matLeaf:matLeaf2);
+    cone.position.set(px,1.3*s,pz); cone.rotation.y=rng()*6; env.add(cone);
+  }
+  // birds circling overhead
+  for (let i=0;i<4;i++){ const b=makeBird(); env.add(b);
+    world.birds.push({ grp:b, cx, cz, rad:6+rng()*7, h:7+rng()*4, sp:0.12+rng()*0.1, ph:rng()*6.28, flap:6+rng()*3 }); }
+}
+
 function buildRoom(){
   const b = bounds();
   const x0=b.min.x-1, x1=b.max.x+1, z0=b.min.z-1, z1=b.max.z+1;
+  const rng = mulberry32(1000 + levelIndex*97 + 13);
+  const cx=(x0+x1)/2, cz=(z0+z1)/2, wx=(x1-x0+1), wz=(z1-z0+1);
+
+  // grass floor + scattered tufts
   const floor = new THREE.Group();
   for (let x=x0;x<=x1;x++) for (let z=z0;z<=z1;z++){
     const t = new THREE.Mesh(new THREE.BoxGeometry(1,0.5,1), ((x+z)&1)?matFloorA:matFloorB);
     t.position.set(x,-0.25,z); t.receiveShadow = true; floor.add(t);
+    if (rng()<0.45){ const tuft=makeTuft(); tuft.position.set(x+(rng()-0.5)*0.5,0,z+(rng()-0.5)*0.5); floor.add(tuft); world.swayers.push({node:tuft.userData.crown, amp:0.10}); }
   }
   world.root.add(floor);
-  const cx=(x0+x1)/2, cz=(z0+z1)/2, wx=(x1-x0+1), wz=(z1-z0+1), H=4.5, th=0.35, by=H/2-0.5;
-  const mk=(w,h,d,px,py,pz,nx,nz)=>{
-    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), matRoom);
-    m.position.set(px,py,pz); m.receiveShadow=true; world.root.add(m);
-    world.roomWalls.push({ mesh:m, nx, nz });
-  };
-  mk(wx+2*th, H, th, cx, by, z0-0.5-th/2, 0,-1);   // north (-z)
-  mk(wx+2*th, H, th, cx, by, z1+0.5+th/2, 0, 1);   // south (+z)
-  mk(th, H, wz, x0-0.5-th/2, by, cz, -1, 0);       // west  (-x)
-  mk(th, H, wz, x1+0.5+th/2, by, cz,  1, 0);       // east  (+x)
+
+  // low mossy stone border wall (always visible; gives the room an edge)
+  const H=1.4, th=0.4, by=H/2-0.5;
+  const mkWall=(w,h,d,px,py,pz)=>{ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),matRoom); m.position.set(px,py,pz); m.receiveShadow=true; m.castShadow=true; world.root.add(m); };
+  mkWall(wx+2*th,H,th, cx, by, z0-0.5-th/2);
+  mkWall(wx+2*th,H,th, cx, by, z1+0.5+th/2);
+  mkWall(th,H,wz, x0-0.5-th/2, by, cz);
+  mkWall(th,H,wz, x1+0.5+th/2, by, cz);
+
+  // ring of trees just outside (hidden when between camera and the level)
+  const R = Math.max(wx,wz)/2 + 1.7;
+  for (let a=0;a<8;a++){
+    const ang=a*Math.PI/4, dx=Math.sin(ang), dz=Math.cos(ang);
+    const tree=makeTree(1.5+rng()*1.3, rng);
+    tree.position.set(cx+dx*R + (rng()-0.5)*0.6, 0, cz+dz*R + (rng()-0.5)*0.6);
+    world.root.add(tree);
+    world.occluders.push({ mesh:tree, nx:dx, nz:dz });
+    world.swayers.push({ node:tree.userData.crown, amp:0.05 });
+  }
+
+  // scattered ground detail on the margin ring (rocks, glowing mushrooms, ferns)
+  let placed=0, tries=0;
+  while (placed<11 && tries<80){
+    tries++;
+    const px=cx+(rng()-0.5)*(wx+3), pz=cz+(rng()-0.5)*(wz+3);
+    if (px>x0-0.6 && px<x1+0.6 && pz>z0-0.6 && pz<z1+0.6) continue; // keep the play area clear
+    const r=rng(); let d;
+    if (r<0.4) d=makeRock(rng);
+    else if (r<0.7) d=makeMushroom();
+    else { d=makeFern(); world.swayers.push({node:d.userData.crown, amp:0.08}); }
+    d.position.set(px,0,pz); world.root.add(d); placed++;
+  }
+
+  // floating pollen / firefly motes
+  world.motes = makeMotes(cx,cz,Math.max(wx,wz));
+  world.root.add(world.motes.points);
+
+  // surrounding world: sky, ground, distant forest, birds
+  buildEnvironment(cx,cz,rng);
 }
 
 // ---------- Load / reset ----------
@@ -247,7 +457,7 @@ function clearWorld(){
 function loadLevel(i){
   clearWorld();
   const def = LEVELS[i];
-  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], name:def.name };
+  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], name:def.name };
   scene.add(world.root);
 
   for (const [x,y,z] of def.walls){ const m=makeSolid('wall',x,y,z); world.solids.set(K(x,y,z),{type:'wall',mesh:m,x,y,z}); }
@@ -257,10 +467,9 @@ function loadLevel(i){
   snapHeroMesh();
   buildRoom();
 
-  // torches mounted near the back corners of the room
+  // playable bounds = the floor extent; the hero and pushed blocks can't leave it
   const b = bounds();
-  addTorch(b.min.x-0.9, 2.2, b.min.z-0.9);
-  addTorch(b.max.x+0.9, 2.2, b.min.z-0.9);
+  world.bnd = { x0:b.min.x-1, x1:b.max.x+1, z0:b.min.z-1, z1:b.max.z+1 };
 
   // frame the camera to the level's size
   const spanX=b.max.x-b.min.x+1, spanZ=b.max.z-b.min.z+1, spanY=b.max.y-b.min.y+1;
@@ -293,6 +502,7 @@ function center(){ const b=bounds(); return b.min.clone().add(b.max).multiplySca
 const isSolid = (x,y,z)=> world.solids.has(K(x,y,z));
 const isBlock = (x,y,z)=>{ const s=world.solids.get(K(x,y,z)); return s && s.type==='block'; };
 const supported = (x,y,z)=> (y<=0) || isSolid(x,y-1,z);   // ground plane top surface at y=0
+const inB = (x,z)=> !world.bnd || (x>=world.bnd.x0 && x<=world.bnd.x1 && z>=world.bnd.z0 && z<=world.bnd.z1);
 
 function moveSolid(s, nx,ny,nz){
   world.solids.delete(K(s.x,s.y,s.z));
@@ -333,13 +543,14 @@ function restore(str){
 }
 
 function syncTargets(){ for (const s of world.solids.values()) s.mesh.position.set(s.x, s.y+0.5, s.z); }
-function snapHeroMesh(){ world.hero.mesh.position.set(world.hero.x, world.hero.y, world.hero.z); heroTarget.copy(world.hero.mesh.position); }
+function snapHeroMesh(){ world.hero.mesh.position.set(world.hero.x, world.hero.y, world.hero.z); heroTarget.copy(world.hero.mesh.position); world.hero.moveT = 1; }
 
 // Movement is derived from the CAMERA's actual facing so keys always match the
 // view: up = into the screen (away from camera), right = screen-right, etc.
 const _fwd = new THREE.Vector3(), _rgt = new THREE.Vector3();
 function snapAxis(v){ return Math.abs(v.x) >= Math.abs(v.z) ? [Math.sign(v.x),0] : [0,Math.sign(v.z)]; }
 function dirFor(key){
+  if (settings.invert){ if(key==='up') key='down'; else if(key==='down') key='up'; }
   camera.getWorldDirection(_fwd);                       // into the screen
   _rgt.setFromMatrixColumn(camera.matrixWorld, 0);      // camera's right
   const away = snapAxis(_fwd), right = snapAxis(_rgt);
@@ -353,7 +564,7 @@ function dirFor(key){
 function snapAllToTargets(){
   if (!world) return;
   for (const s of world.solids.values()) s.mesh.position.set(s.x, s.y+0.5, s.z);
-  world.hero.mesh.position.copy(heroTarget); anim=false;
+  world.hero.mesh.position.copy(heroTarget); world.hero.moveT = 1; anim=false;
 }
 
 function tryMove(key, pull){
@@ -367,7 +578,7 @@ function tryMove(key, pull){
   if (pull){
     const fx=h.x+dx, fz=h.z+dz;          // block in front
     const bx=h.x-dx, bz=h.z-dz;          // where hero retreats
-    if (isBlock(fx,h.y,fz) && !isSolid(bx,h.y,bz) && supported(bx,h.y,bz)){
+    if (isBlock(fx,h.y,fz) && !isSolid(bx,h.y,bz) && inB(bx,bz) && supported(bx,h.y,bz)){
       const blk = world.solids.get(K(fx,h.y,fz));
       const ox=h.x, oy=h.y, oz=h.z;
       h.x=bx; h.z=bz;                    // hero steps back
@@ -378,13 +589,14 @@ function tryMove(key, pull){
   }
 
   const fx=h.x+dx, fy=h.y, fz=h.z+dz;
+  if (!inB(fx,fz)) return;               // wall collision — can't leave the room
   if (!isSolid(fx,fy,fz)){
     // walk into the cell (may then fall)
     h.x=fx; h.z=fz; commit(before, 'walk'); return;
   }
   if (isBlock(fx,fy,fz)){
     const gx=fx+dx, gz=fz+dz;            // cell beyond the block
-    if (!isSolid(gx,fy,gz)){
+    if (!isSolid(gx,fy,gz) && inB(gx,gz)){
       const blk = world.solids.get(K(fx,fy,fz));
       moveSolid(blk, gx,fy,gz);          // push
       h.x=fx; h.z=fz;
@@ -405,10 +617,15 @@ function commit(before, kind){
   history.push(before);
   moves++;
   syncTargets(); updateHud();
+  h.moveFrom = h.mesh.position.clone();
   heroTarget.set(h.x, h.y, h.z);
+  h.moveTo = heroTarget.clone();
+  h.moveT = 0;
+  h.moveDur = kind==='climb' ? 0.34 : kind==='pull' ? 0.30 : 0.26;
   h.act = kind || 'walk';
   h.actStart = performance.now();
   anim = true;
+  SFX.play(kind || 'walk');
   document.getElementById('hint').classList.add('hide');
   checkWin();
 }
@@ -418,6 +635,7 @@ function checkWin(){
   if (h.x===e.x && h.y===e.y && h.z===e.z){
     won = true;
     h.winStart = performance.now();
+    SFX.play('win');
     const at = levelIndex;
     setTimeout(()=>{ if (won && levelIndex===at) document.getElementById('win').classList.add('show'); }, 950);
   }
@@ -431,6 +649,9 @@ function updateHud(){ document.getElementById('moves').textContent = 'moves '+mo
 
 // ---------- Input ----------
 addEventListener('keydown', e=>{
+  if (!started) return;
+  if (!document.getElementById('settings').classList.contains('hidden')){ if(e.key==='Escape') document.getElementById('settings').classList.add('hidden'); return; }
+  SFX.resume();
   const k = e.key.toLowerCase();
   const map = { arrowup:'up', w:'up', arrowdown:'down', s:'down', arrowleft:'left', a:'left', arrowright:'right', d:'right' };
   if (map[k]){ e.preventDefault(); tryMove(map[k], e.shiftKey); return; }
@@ -469,10 +690,10 @@ function frame(now){
   camera.position.set(cx, camTarget.y+camHeight, cz);
   camera.lookAt(camTarget);
 
-  // hide the room wall(s) between the camera and the level so you always see in
-  if (world && world.roomWalls){
+  // hide the trees between the camera and the level so they never block the view
+  if (world && world.occluders){
     const cdx=Math.sin(orientAnim), cdz=Math.cos(orientAnim);
-    for (const wl of world.roomWalls) wl.mesh.visible = (wl.nx*cdx + wl.nz*cdz) < 0.25;
+    for (const o of world.occluders) o.mesh.visible = (o.nx*cdx + o.nz*cdz) < 0.30;
   }
 
   // tween meshes
@@ -480,12 +701,16 @@ function frame(now){
     let moving=false;
     for (const s of world.solids.values()){
       const t=new THREE.Vector3(s.x, s.y+0.5, s.z);
-      if (s.mesh.position.distanceTo(t)>0.002){ s.mesh.position.lerp(t, Math.min(dt*14,1)); moving=true; }
+      if (s.mesh.position.distanceTo(t)>0.002){ s.mesh.position.lerp(t, Math.min(dt*11,1)); moving=true; }
       else s.mesh.position.copy(t);
     }
     const h=world.hero;
-    if (h.mesh.position.distanceTo(heroTarget)>0.002){ h.mesh.position.lerp(heroTarget, Math.min(dt*14,1)); moving=true; }
-    else h.mesh.position.copy(heroTarget);
+    if (h.moveT!==undefined && h.moveT<1){
+      h.moveT = Math.min(1, h.moveT + dt/h.moveDur);
+      const p=h.moveT, e = p<0.5 ? 2*p*p : 1-Math.pow(-2*p+2,2)/2;   // easeInOut
+      h.mesh.position.lerpVectors(h.moveFrom, h.moveTo, e);
+      moving=true;
+    } else h.mesh.position.copy(heroTarget);
     if (anim && !moving) anim=false;
 
     // ---- knight animation (procedural) ----
@@ -500,39 +725,65 @@ function frame(now){
     while (dyaw<-Math.PI) dyaw+=Math.PI*2;
     h.mesh.rotation.y += dyaw*Math.min(dt*12,1);
 
-    let tLeg=0,tLegR=0,tArmL=0,tArmR=0,tLean=0,tBodyY=0,tTwist=0;
+    let tHipL=0,tHipR=0,tKneeL=0,tKneeR=0,tArmL=0,tArmR=0,tLean=0,tBodyY=0,tTwist=0;
+    const mt = (h.moveT===undefined)?1:h.moveT;
+    const posing = (now-(h.actStart||0))/1000 < 0.36;   // hold action poses briefly
     if (won){
-      const tt=(now-(h.winStart||now))/1000;         // victory dance
+      const tt=(now-(h.winStart||now))/1000;            // victory dance
       tTwist = Math.sin(tt*5)*0.5;
       tArmL = tArmR = -2.2 + Math.sin(tt*10)*0.5;
-      tLeg  = Math.sin(tt*10)*0.35; tLegR = -tLeg;
+      tHipL = Math.sin(tt*10)*0.4; tHipR = -tHipL;
+      tKneeL = Math.max(0,-tHipL)*1.2; tKneeR = Math.max(0,-tHipR)*1.2;
       tBodyY = Math.abs(Math.sin(tt*7))*0.18;
-    } else if (moving){
-      const ph = now/1000*9, sw = Math.sin(ph)*0.5;   // walk cycle
-      tLeg = sw; tLegR = -sw; tBodyY = Math.abs(Math.sin(ph))*0.03;
-      tArmL = -sw*0.7; tArmR = sw*0.7;
-      if (h.act==='push'){ tArmL=tArmR=-1.2; tLean=0.28; }
-      else if (h.act==='pull'){ tArmL=tArmR=0.7; tLean=-0.18; }
-      else if (h.act==='climb'){
-        const prog=Math.min((now-(h.actStart||now))/220,1);
-        tArmL=tArmR=-2.3; tLeg=0.3; tLegR=0.3; tBodyY += Math.sin(prog*Math.PI)*0.22;
-      }
+    } else if (h.act==='push' && (moving||posing)){     // brace + shove
+      tHipL=0.32; tHipR=-0.44; tKneeL=0.28; tKneeR=0.6;
+      tArmL=tArmR=-1.5; tLean=0.42;
+    } else if (h.act==='pull' && (moving||posing)){     // lean back, haul
+      tHipL=-0.32; tHipR=0.18; tKneeL=0.18; tKneeR=0.34;
+      tArmL=tArmR=0.85; tLean=-0.24;
+    } else if (h.act==='climb' && (moving||posing)){    // reach up + step up
+      tArmL=tArmR=-2.3; tHipL=0.55; tHipR=0.55; tKneeL=1.0; tKneeR=1.0;
+      tBodyY = Math.sin(mt*Math.PI)*0.22;
+    } else if (moving){                                 // one full stride per step
+      const sp=(moves%2)?1:-1, sw=Math.sin(mt*Math.PI)*0.62*sp;
+      tHipL=sw; tHipR=-sw;
+      tKneeL=Math.max(0,-sw)*1.4; tKneeR=Math.max(0,sw)*1.4;
+      tArmL=-sw*0.8; tArmR=sw*0.8;
+      tBodyY=Math.sin(mt*Math.PI)*0.05;
     } else {
-      tBodyY = Math.sin(now/1000*2)*0.02;             // idle breathe
+      tBodyY = Math.sin(now/1000*2)*0.02;               // idle breathe
     }
     const sk = won ? 0.5 : k;
-    P.legL.rotation.x = L(P.legL.rotation.x, tLeg,  sk);
-    P.legR.rotation.x = L(P.legR.rotation.x, tLegR, sk);
+    P.legL.hip.rotation.x  = L(P.legL.hip.rotation.x,  tHipL,  sk);
+    P.legR.hip.rotation.x  = L(P.legR.hip.rotation.x,  tHipR,  sk);
+    P.legL.knee.rotation.x = L(P.legL.knee.rotation.x, tKneeL, sk);
+    P.legR.knee.rotation.x = L(P.legR.knee.rotation.x, tKneeR, sk);
     P.armL.rotation.x = L(P.armL.rotation.x, tArmL, sk);
     P.armR.rotation.x = L(P.armR.rotation.x, tArmR, sk);
     P.body.rotation.x = L(P.body.rotation.x, tLean,  k);
     P.body.position.y = L(P.body.position.y, tBodyY, sk);
     P.body.rotation.y = L(P.body.rotation.y, tTwist, won?0.4:k);
 
-    // gentle rune + exit pulse, torch flicker
+    // gentle exit pulse, swaying foliage, drifting motes
     const t=now/1000;
     if (world._exitRing){ world._exitRing.scale.setScalar(1+Math.sin(t*3)*0.06); }
-    for (const tr of torches){ tr.light.intensity = tr.base*(0.85+Math.random()*0.3); }
+    if (!settings.reduceMotion){
+      for (let i=0;i<world.swayers.length;i++){ const s=world.swayers[i]; s.node.rotation.z = Math.sin(t*1.3 + i*0.7)*s.amp; }
+      if (world.motes){ const arr=world.motes.geo.attributes.position.array, bs=world.motes.base;
+        for (let i=0;i<bs.length;i++){ const b=bs[i];
+          arr[i*3]   = b.x + Math.sin(t*0.5 + b.ph)*0.3;
+          arr[i*3+1] = 0.3 + ((b.y-0.3 + t*b.sp) % 3.4);
+          arr[i*3+2] = b.z + Math.cos(t*0.4 + b.ph)*0.3;
+        }
+        world.motes.geo.attributes.position.needsUpdate = true;
+      }
+      for (const bd of world.birds){
+        const ang = t*bd.sp + bd.ph;
+        bd.grp.position.set(bd.cx+Math.cos(ang)*bd.rad, bd.h, bd.cz+Math.sin(ang)*bd.rad);
+        bd.grp.rotation.y = -ang;
+        const f=Math.sin(t*bd.flap)*0.6; bd.grp.userData.wl.rotation.z=f; bd.grp.userData.wr.rotation.z=-f;
+      }
+    }
   }
   renderer.render(scene,camera);
   requestAnimationFrame(frame);
@@ -553,6 +804,23 @@ window.__stonestep = {
   set level(i){ levelIndex=i; loadLevel(i); },
   get level(){ return levelIndex; },
 };
+
+// ---------- UI wiring ----------
+const $ = id=>document.getElementById(id);
+function applySettings(){
+  $('volRange').value = Math.round(settings.volume*100);
+  $('rmChk').checked = settings.reduceMotion;
+  $('invChk').checked = settings.invert;
+  SFX.setVolume(settings.volume);
+}
+$('volRange').addEventListener('input', e=>{ settings.volume=(+e.target.value)/100; SFX.setVolume(settings.volume); SFX.resume(); SFX.play('walk'); saveSettings(); });
+$('rmChk').addEventListener('change', e=>{ settings.reduceMotion=e.target.checked; saveSettings(); });
+$('invChk').addEventListener('change', e=>{ settings.invert=e.target.checked; saveSettings(); });
+$('playBtn').addEventListener('click', ()=>{ started=true; SFX.resume(); $('title').classList.add('hidden'); $('hint').classList.remove('hide'); });
+$('setBtn').addEventListener('click', ()=>{ $('settings').classList.remove('hidden'); });
+$('setClose').addEventListener('click', ()=>{ $('settings').classList.add('hidden'); });
+$('gear').addEventListener('click', ()=>{ $('settings').classList.remove('hidden'); });
+applySettings();
 </script>
 </body>
 </html>
