@@ -127,6 +127,35 @@ const LEVELS = [
     blocks: [[4, 0, 1]],
     walls: [[4, 0, 4], [4, 1, 4]],
   },
+  {
+    name: 'Out of the sun · 3',
+    hint: 'Golden ground is sunlit — you can only cross it in shade. Push a stone beside a sunlit tile to shade it.',
+    bnd: { x0:1, x1:5, z0:1, z1:3 },
+    hero: [1, 0, 2],
+    exit: [5, 0, 2],
+    blocks: [[2, 0, 1]],
+    sunTiles: [[3, 2]],
+    walls: [[1,0,3],[2,0,3],[3,0,3],[4,0,3],[5,0,3],[4,0,1],[5,0,1]],
+  },
+  {
+    name: 'Take root · 4',
+    hint: 'Move a seed, then leave it a moment — it takes root into solid ground. You can climb a rooted stone (but a loose one you would just push).',
+    bnd: { x0:1, x1:4, z0:0, z1:2 },
+    hero: [1, 0, 1],
+    exit: [3, 1, 1],
+    seeds: [[2, 0, 1]],
+    walls: [],
+  },
+  {
+    name: 'Rooted bridge · 5',
+    hint: 'One rooted stone can do two jobs: shade the sunlit tile AND be the step you climb. Root it in the right place.',
+    bnd: { x0:1, x1:4, z0:1, z1:3 },
+    hero: [1, 0, 2],
+    exit: [4, 1, 2],
+    seeds: [[2, 0, 2]],
+    sunTiles: [[3, 2]],
+    walls: [[4,0,1],[4,0,3]],
+  },
 ];
 
 // ---------- Scene ----------
@@ -151,7 +180,7 @@ let camDist = 12, camHeight = 9;   // set per level from its size
 scene.add(new THREE.AmbientLight('#a6bcae', 0.7));
 scene.add(new THREE.HemisphereLight('#d6ecff', '#38492f', 0.55));
 const key = new THREE.DirectionalLight('#fff0c8', 1.15);
-key.position.set(8, 14, 6); key.castShadow = true;
+key.position.set(13, 15, 3); key.castShadow = true;
 key.shadow.mapSize.set(1024,1024);
 key.shadow.camera.left=-14; key.shadow.camera.right=14;
 key.shadow.camera.top=14; key.shadow.camera.bottom=-14;
@@ -191,6 +220,10 @@ const steel  = new THREE.MeshStandardMaterial({ color:'#9aa3b5', metalness:0.55,
 const steelD = new THREE.MeshStandardMaterial({ color:'#6b7488', metalness:0.55, roughness:0.5 });
 const darkM  = new THREE.MeshStandardMaterial({ color:'#22262f', metalness:0.3, roughness:0.7 });
 const crestM = new THREE.MeshStandardMaterial({ color:'#b23b3b', roughness:0.55 });
+const matSeed    = new THREE.MeshStandardMaterial({ color:'#7f9350', roughness:0.7, emissive:'#37561f', emissiveIntensity:0.28 });
+const matSeedTop = new THREE.MeshStandardMaterial({ color:'#95ad5d', roughness:0.7 });
+const matRooted  = new THREE.MeshStandardMaterial({ color:'#5c6b45', roughness:1.0 });
+const matRootTop = new THREE.MeshStandardMaterial({ color:'#6f8a3f', roughness:0.95 });
 
 function boxMats(side, top){ return [side,side,top,side,side,side]; } // +y is index 2
 
@@ -245,6 +278,12 @@ function makeSolid(type, x,y,z){
   let mesh;
   if (type==='wall'){
     mesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), boxMats(matWall, matWallTop));
+  } else if (type==='rooted'){
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), boxMats(matRooted, matRootTop));
+    const sp = new THREE.Mesh(new THREE.ConeGeometry(0.13,0.3,6), matLeaf2); sp.position.y=0.64; mesh.add(sp);
+  } else if (type==='seed'){
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94,0.94,0.94), boxMats(matSeed, matSeedTop));
+    const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.10,0.22,6), matLeaf2); sprout.position.y=0.56; mesh.add(sprout);
   } else {
     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94,0.94,0.94), boxMats(matBlock, matBlockTop));
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24,0.035,8,20), matRune);
@@ -393,8 +432,7 @@ function buildEnvironment(cx,cz,rng){
 }
 
 function buildRoom(){
-  const b = bounds();
-  const x0=b.min.x-1, x1=b.max.x+1, z0=b.min.z-1, z1=b.max.z+1;
+  const { x0, x1, z0, z1 } = world.bnd;
   const rng = mulberry32(1000 + levelIndex*97 + 13);
   const cx=(x0+x1)/2, cz=(z0+z1)/2, wx=(x1-x0+1), wz=(z1-z0+1);
 
@@ -457,22 +495,34 @@ function clearWorld(){
 function loadLevel(i){
   clearWorld();
   const def = LEVELS[i];
-  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], name:def.name };
+  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], sunSet:new Set(), sunTiles:[], shadeSet:new Set(), name:def.name };
+  world._sunTilesRaw = def.sunTiles || [];
   scene.add(world.root);
 
   for (const [x,y,z] of def.walls){ const m=makeSolid('wall',x,y,z); world.solids.set(K(x,y,z),{type:'wall',mesh:m,x,y,z}); }
-  for (const [x,y,z] of def.blocks){ const m=makeSolid('block',x,y,z); world.solids.set(K(x,y,z),{type:'block',mesh:m,x,y,z}); }
+  for (const [x,y,z] of (def.blocks||[])){ const m=makeSolid('block',x,y,z); world.solids.set(K(x,y,z),{type:'block',mesh:m,x,y,z}); }
+  for (const [x,y,z] of (def.seeds||[])){ const m=makeSolid('seed',x,y,z); world.solids.set(K(x,y,z),{type:'seed',mesh:m,x,y,z,hasMoved:false,rest:0,_lastKey:K(x,y,z)}); }
   world.hero = { x:def.hero[0], y:def.hero[1], z:def.hero[2], mesh:makeHero(), face:[0,1] };
   world.exit = { x:def.exit[0], y:def.exit[1], z:def.exit[2], mesh:makeExit(...def.exit) };
   snapHeroMesh();
+
+  // playable bounds — a level may pin them exactly (def.bnd) so there's no margin
+  // to sneak around; otherwise auto = used cells ±1. Floor, movement, and camera
+  // all share this rectangle.
+  const b = bounds();
+  world.bnd = def.bnd || { x0:b.min.x-1, x1:b.max.x+1, z0:b.min.z-1, z1:b.max.z+1 };
   buildRoom();
 
-  // playable bounds = the floor extent; the hero and pushed blocks can't leave it
-  const b = bounds();
-  world.bnd = { x0:b.min.x-1, x1:b.max.x+1, z0:b.min.z-1, z1:b.max.z+1 };
+  // sun-tiles (impassable in sunlight, walkable when shaded)
+  world.sunSet = new Set(world._sunTilesRaw.map(([x,z])=>x+','+z));
+  for (const [x,z] of world._sunTilesRaw){
+    const mat=new THREE.MeshStandardMaterial({ color:'#e6c24a', roughness:0.8, emissive:'#5a3f00', emissiveIntensity:0.32 });
+    const m=new THREE.Mesh(new THREE.BoxGeometry(0.96,0.54,0.96), mat); m.position.set(x,-0.23,z); m.receiveShadow=true; world.root.add(m);
+    world.sunTiles.push({x,z,mesh:m});
+  }
 
-  // frame the camera to the level's size
-  const spanX=b.max.x-b.min.x+1, spanZ=b.max.z-b.min.z+1, spanY=b.max.y-b.min.y+1;
+  // frame the camera to the play rectangle
+  const spanX=world.bnd.x1-world.bnd.x0+1, spanZ=world.bnd.z1-world.bnd.z0+1, spanY=b.max.y-b.min.y+1;
   const maxDim=Math.max(spanX,spanZ);
   camDist = maxDim*1.5 + 5;
   camHeight = maxDim*0.8 + spanY*0.7 + 4;
@@ -492,6 +542,7 @@ function bounds(){
   const min = new THREE.Vector3( 999, 999, 999), max = new THREE.Vector3(-999,-999,-999);
   const consider = (x,y,z)=>{ min.min(new THREE.Vector3(x,y,z)); max.max(new THREE.Vector3(x,y,z)); };
   for (const s of world.solids.values()) consider(s.x,s.y,s.z);
+  if (world._sunTilesRaw) for (const [x,z] of world._sunTilesRaw) consider(x,0,z);
   consider(world.hero.x,world.hero.y,world.hero.z);
   consider(world.exit.x,world.exit.y,world.exit.z);
   return { min, max };
@@ -500,9 +551,29 @@ function center(){ const b=bounds(); return b.min.clone().add(b.max).multiplySca
 
 // ---------- Rules ----------
 const isSolid = (x,y,z)=> world.solids.has(K(x,y,z));
-const isBlock = (x,y,z)=>{ const s=world.solids.get(K(x,y,z)); return s && s.type==='block'; };
+const isBlock = (x,y,z)=>{ const s=world.solids.get(K(x,y,z)); return s && (s.type==='block' || s.type==='seed'); }; // pushable
 const supported = (x,y,z)=> (y<=0) || isSolid(x,y-1,z);   // ground plane top surface at y=0
 const inB = (x,z)=> !world.bnd || (x>=world.bnd.x0 && x<=world.bnd.x1 && z>=world.bnd.z0 && z<=world.bnd.z1);
+
+// Shadow: a sun-tile is shaded when a movable stone (block/seed/rooted) sits on
+// any orthogonally-adjacent cell. Walls don't cast shade; a ROOTED stone does,
+// so it makes a permanent shade-bridge.
+function casterAt(x,z){ for (let y=0;y<10;y++){ const s=world.solids.get(K(x,y,z)); if (s && s.type!=='wall') return true; } return false; }
+const isSunTile = (x,z)=> world.sunSet && world.sunSet.has(x+','+z);
+const shaded    = (x,z)=> casterAt(x+1,z)||casterAt(x-1,z)||casterAt(x,z+1)||casterAt(x,z-1);
+const sunBlocked = (x,y,z)=> y===0 && isSunTile(x,z) && !shaded(x,z);   // sunlit tile = impassable
+
+// Rooting: a seed that has moved and then stays put for a turn locks into permanent terrain.
+function rootSeed(s){ s.type='rooted'; world.root.remove(s.mesh); s.mesh = makeSolid('rooted', s.x,s.y,s.z); }
+function updateRooting(){
+  for (const s of [...world.solids.values()]){
+    if (s.type!=='seed') continue;
+    const key=K(s.x,s.y,s.z);
+    if (s._lastKey===undefined) s._lastKey=key;
+    if (key!==s._lastKey){ s.hasMoved=true; s.rest=0; s._lastKey=key; }
+    else if (s.hasMoved){ s.rest=(s.rest||0)+1; if (s.rest>=1) rootSeed(s); }
+  }
+}
 
 function moveSolid(s, nx,ny,nz){
   world.solids.delete(K(s.x,s.y,s.z));
@@ -515,7 +586,7 @@ function settle(){
   let moved = true;
   while (moved){
     moved = false;
-    const blocks = [...world.solids.values()].filter(s=>s.type==='block').sort((a,b)=>a.y-b.y);
+    const blocks = [...world.solids.values()].filter(s=>s.type==='block'||s.type==='seed').sort((a,b)=>a.y-b.y);
     for (const s of blocks){ if (s.y>0 && !isSolid(s.x,s.y-1,s.z)){ moveSolid(s,s.x,s.y-1,s.z); moved=true; } }
   }
   // hero falls
@@ -525,18 +596,19 @@ function settle(){
 
 function snapshot(){
   return JSON.stringify({
-    s:[...world.solids.values()].map(s=>[s.type,s.x,s.y,s.z]),
+    s:[...world.solids.values()].map(s=>[s.type,s.x,s.y,s.z, s.hasMoved?1:0, s.rest||0]),
     h:[world.hero.x,world.hero.y,world.hero.z], m:moves });
 }
 function restore(str){
   const st = JSON.parse(str);
-  // rebuild solids to match
-  const want = new Map();
-  for (const [t,x,y,z] of st.s) want.set(K(x,y,z),{t,x,y,z});
-  // remove extras
-  for (const key of [...world.solids.keys()]) if (!want.has(key)){ const s=world.solids.get(key); world.root.remove(s.mesh); world.solids.delete(key); }
-  // add missing
-  for (const [key,w] of want){ if (!world.solids.has(key)){ const m=makeSolid(w.t,w.x,w.y,w.z); world.solids.set(key,{type:w.t,mesh:m,x:w.x,y:w.y,z:w.z}); } }
+  for (const s of world.solids.values()) world.root.remove(s.mesh);
+  world.solids.clear();
+  for (const e of st.s){
+    const t=e[0], x=e[1], y=e[2], z=e[3];
+    const o = { type:t, mesh:makeSolid(t,x,y,z), x, y, z };
+    if (t==='seed'){ o.hasMoved=!!e[4]; o.rest=e[5]||0; o._lastKey=K(x,y,z); }
+    world.solids.set(K(x,y,z), o);
+  }
   world.hero.x=st.h[0]; world.hero.y=st.h[1]; world.hero.z=st.h[2];
   moves = st.m;
   syncTargets(); snapHeroMesh(); updateHud();
@@ -578,7 +650,7 @@ function tryMove(key, pull){
   if (pull){
     const fx=h.x+dx, fz=h.z+dz;          // block in front
     const bx=h.x-dx, bz=h.z-dz;          // where hero retreats
-    if (isBlock(fx,h.y,fz) && !isSolid(bx,h.y,bz) && inB(bx,bz) && supported(bx,h.y,bz)){
+    if (isBlock(fx,h.y,fz) && !isSolid(bx,h.y,bz) && inB(bx,bz) && !sunBlocked(bx,h.y,bz) && supported(bx,h.y,bz)){
       const blk = world.solids.get(K(fx,h.y,fz));
       const ox=h.x, oy=h.y, oz=h.z;
       h.x=bx; h.z=bz;                    // hero steps back
@@ -591,6 +663,7 @@ function tryMove(key, pull){
   const fx=h.x+dx, fy=h.y, fz=h.z+dz;
   if (!inB(fx,fz)) return;               // wall collision — can't leave the room
   if (!isSolid(fx,fy,fz)){
+    if (sunBlocked(fx,fy,fz)) return;    // sunlit tile — cross only in shade
     // walk into the cell (may then fall)
     h.x=fx; h.z=fz; commit(before, 'walk'); return;
   }
@@ -614,6 +687,7 @@ function tryMove(key, pull){
 function commit(before, kind){
   const h = world.hero;
   settle();
+  updateRooting();
   history.push(before);
   moves++;
   syncTargets(); updateHud();
@@ -767,6 +841,12 @@ function frame(now){
     // gentle exit pulse, swaying foliage, drifting motes
     const t=now/1000;
     if (world._exitRing){ world._exitRing.scale.setScalar(1+Math.sin(t*3)*0.06); }
+    for (const st of world.sunTiles){
+      const open = shaded(st.x, st.z);
+      st.mesh.material.color.set(open?'#3f4a33':'#e6c24a');
+      st.mesh.material.emissive.set(open?'#0b1006':'#5a3f00');
+      st.mesh.material.emissiveIntensity = open?0.06:0.34;
+    }
     if (!settings.reduceMotion){
       for (let i=0;i<world.swayers.length;i++){ const s=world.swayers[i]; s.node.rotation.z = Math.sin(t*1.3 + i*0.7)*s.amp; }
       if (world.motes){ const arr=world.motes.geo.attributes.position.array, bs=world.motes.base;
