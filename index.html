@@ -63,6 +63,7 @@
   <div class="chips">
     <span class="chip"><b>← ↑ ↓ →</b> move</span>
     <span class="chip">hold <b>shift</b>: drag</span>
+    <span class="chip"><b>space</b>: throw / wait</span>
     <span class="chip"><b>Q</b>/<b>E</b> turn</span>
     <span class="chip"><b>Z</b> undo</span>
     <span class="chip"><b>R</b> restart</span>
@@ -88,6 +89,7 @@
       <b>← ↑ ↓ →</b><span>move (relative to the view)</span>
       <b>Q / E</b><span>turn the camera</span>
       <b>Hold Shift</b><span>drag the stone behind you</span>
+      <b>Space</b><span>throw a seed / wait for it to grow</span>
       <b>Z / R</b><span>undo / restart</span>
     </div>
     <div class="btns">
@@ -190,6 +192,15 @@ const LEVELS = [
     sunTiles: [[3, 2]],
     walls: [[4,0,1],[4,0,3],[5,0,1],[5,0,3]],
   },
+  {
+    name: 'Plant a step · 9',
+    hint: 'You’re carrying a seed. Face a spot and press SPACE to throw it. Then climb onto the sprout and press SPACE to wait — it grows and lifts you up to the gate.',
+    bnd: { x0:1, x1:5, z0:1, z1:3 },
+    hero: [1, 0, 2],
+    hold: 'seed',
+    exit: [4, 3, 2],
+    walls: [[5,0,2]],
+  },
 ];
 
 // ---------- Scene ----------
@@ -206,6 +217,10 @@ app.appendChild(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
 let camTarget = new THREE.Vector3();
+
+const throwMarker = new THREE.Mesh(new THREE.RingGeometry(0.26,0.4,20),
+  new THREE.MeshBasicMaterial({ color:'#8fce5c', transparent:true, opacity:0.7, side:THREE.DoubleSide, depthWrite:false }));
+throwMarker.rotation.x = -Math.PI/2; throwMarker.visible = false; scene.add(throwMarker);
 let orient = 0;            // 0..3, quarter turns
 let orientAnim = 0;        // animated yaw (radians) that eases toward orient
 let camDist = 12, camHeight = 9;   // set per level from its size
@@ -252,6 +267,9 @@ const matMush   = new THREE.MeshStandardMaterial({ color:'#e08a58', emissive:'#f
 const matStem   = new THREE.MeshStandardMaterial({ color:'#ece3cf', roughness:0.85 });
 const matVine   = new THREE.MeshStandardMaterial({ color:'#4c6b3a', roughness:0.9 });
 const matMoss   = new THREE.MeshStandardMaterial({ color:'#5f7a3e', roughness:1.0 });
+const matSprout = new THREE.MeshStandardMaterial({ color:'#5e8a3c', roughness:0.75, emissive:'#2f5018', emissiveIntensity:0.2 });
+const matSproutTop = new THREE.MeshStandardMaterial({ color:'#79a84c', roughness:0.7 });
+const THROW_RANGE = 3, GROW_MAX = 4;   // tiles a seed flies; max pillar height
 const steel  = new THREE.MeshStandardMaterial({ color:'#9aa3b5', metalness:0.55, roughness:0.42 });
 const steelD = new THREE.MeshStandardMaterial({ color:'#6b7488', metalness:0.55, roughness:0.5 });
 const darkM  = new THREE.MeshStandardMaterial({ color:'#22262f', metalness:0.3, roughness:0.7 });
@@ -324,6 +342,9 @@ function makeSolid(type, x,y,z){
   } else if (type==='seed'){
     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94,0.94,0.94), boxMats(matSeed, matSeedTop));
     const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.10,0.22,6), matLeaf2); sprout.position.y=0.56; mesh.add(sprout);
+  } else if (type==='sprout'){
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.9,1,0.9), boxMats(matSprout, matSproutTop));
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.17,0.36,6), matSproutTop); leaf.position.y=0.6; mesh.add(leaf);
   } else {
     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.94,0.94,0.94), boxMats(matBlock, matBlockTop));
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24,0.035,8,20), matRune);
@@ -369,8 +390,11 @@ function makeHero(){
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.055,0.03), darkM); visor.position.set(0,0.78,0.12); body.add(visor);
   const crest = new THREE.Mesh(new THREE.BoxGeometry(0.045,0.15,0.22), crestM); crest.position.set(0,0.95,-0.01); body.add(crest);
 
+  const held = new THREE.Mesh(new THREE.SphereGeometry(0.11,10,8), matSeed);
+  held.position.set(0,0.46,0.26); held.visible=false; body.add(held);
+
   g.traverse(o=>{ if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
-  g.userData.parts = { body, legL, legR, armL, armR, torso, helm };
+  g.userData.parts = { body, legL, legR, armL, armR, torso, helm, held };
   world.root.add(g);
   return g;
 }
@@ -395,6 +419,14 @@ function makeExit(x,y,z){
   return g;
 }
 
+function makePod(x,z){
+  const g=new THREE.Group();
+  const pod=new THREE.Mesh(new THREE.SphereGeometry(0.16,10,8), matSeed); pod.position.y=0.16; pod.castShadow=true;
+  const leaf=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.18,5), matLeaf2); leaf.position.y=0.16; pod.add(leaf);
+  g.add(pod); g.position.set(x,0,z);
+  g.userData.bob=true;
+  return g;
+}
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 
 function makeTree(scale, rng){
@@ -576,14 +608,15 @@ function clearWorld(){
 function loadLevel(i){
   clearWorld();
   const def = LEVELS[i];
-  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], leaves:null, butterflies:[], sunSet:new Set(), sunTiles:[], shadeSet:new Set(), name:def.name };
+  world = { solids:new Map(), root:new THREE.Group(), roomWalls:[], occluders:[], swayers:[], motes:null, birds:[], leaves:null, butterflies:[], sunSet:new Set(), sunTiles:[], shadeSet:new Set(), podSet:new Set(), podMesh:new Map(), name:def.name };
   world._sunTilesRaw = def.sunTiles || [];
   scene.add(world.root);
 
   for (const [x,y,z] of def.walls){ const m=makeSolid('wall',x,y,z); world.solids.set(K(x,y,z),{type:'wall',mesh:m,x,y,z}); }
   for (const [x,y,z] of (def.blocks||[])){ const m=makeSolid('block',x,y,z); world.solids.set(K(x,y,z),{type:'block',mesh:m,x,y,z}); }
   for (const [x,y,z] of (def.seeds||[])){ const m=makeSolid('seed',x,y,z); world.solids.set(K(x,y,z),{type:'seed',mesh:m,x,y,z,hasMoved:false,rest:0,_lastKey:K(x,y,z)}); }
-  world.hero = { x:def.hero[0], y:def.hero[1], z:def.hero[2], mesh:makeHero(), face:[0,1] };
+  for (const [x,z] of (def.seedPods||[])){ const key=x+','+z; world.podSet.add(key); const m=makePod(x,z); world.root.add(m); world.podMesh.set(key,m); }
+  world.hero = { x:def.hero[0], y:def.hero[1], z:def.hero[2], mesh:makeHero(), face:[0,1], holding:def.hold||null };
   world.exit = { x:def.exit[0], y:def.exit[1], z:def.exit[2], mesh:makeExit(...def.exit) };
   snapHeroMesh();
 
@@ -644,6 +677,25 @@ const isSunTile = (x,z)=> world.sunSet && world.sunSet.has(x+','+z);
 const shaded    = (x,z)=> casterAt(x+1,z)||casterAt(x-1,z)||casterAt(x,z+1)||casterAt(x,z-1);
 const sunBlocked = (x,y,z)=> y===0 && isSunTile(x,z) && !shaded(x,z);   // sunlit tile = impassable
 
+// Growth: a planted sprout grows one level per turn (a pillar), unless a pushable
+// stone stands next to it (its shade stops it) or it's blocked above. The knight
+// rides up if he's standing on top of a growing pillar.
+function addSprout(x,y,z,fresh){ const m=makeSolid('sprout',x,y,z); world.solids.set(K(x,y,z),{type:'sprout',mesh:m,x,y,z,fresh:!!fresh}); }
+function growthBlocked(x,z){ for (const s of world.solids.values()) if (s.type==='block' && Math.abs(s.x-x)+Math.abs(s.z-z)===1) return true; return false; }
+function growSprouts(){
+  const top = new Map();                           // column "x,z" -> top sprout solid
+  for (const s of world.solids.values()) if (s.type==='sprout'){ const kk=s.x+','+s.z; const c=top.get(kk); if(!c||s.y>c.y) top.set(kk,s); }
+  for (const [kk,s] of top){
+    if (s.fresh){ s.fresh=false; continue; }        // planted this turn — start growing next turn
+    const x=s.x, z=s.z;
+    if (s.y >= GROW_MAX-1) continue;                // reached max height
+    if (growthBlocked(x,z)) continue;               // a stone beside it halts growth
+    const ay = s.y+1, h = world.hero;
+    if (h.x===x && h.z===z && h.y===ay){ addSprout(x,ay,z,false); h.y = ay+1; }   // grows into the knight -> ride up
+    else if (!isSolid(x,ay,z)) addSprout(x,ay,z,false);
+  }
+}
+
 // Rooting: a seed that has moved and then stays put for a turn locks into permanent terrain.
 function rootSeed(s){ s.type='rooted'; world.root.remove(s.mesh); s.mesh = makeSolid('rooted', s.x,s.y,s.z); }
 function updateRooting(){
@@ -677,8 +729,11 @@ function settle(){
 
 function snapshot(){
   return JSON.stringify({
-    s:[...world.solids.values()].map(s=>[s.type,s.x,s.y,s.z, s.hasMoved?1:0, s.rest||0]),
-    h:[world.hero.x,world.hero.y,world.hero.z], m:moves });
+    s:[...world.solids.values()].map(s=>[s.type,s.x,s.y,s.z, s.hasMoved?1:0, s.rest||0, s.fresh?1:0]),
+    h:[world.hero.x,world.hero.y,world.hero.z],
+    hold: world.hero.holding||null,
+    pods: world.podSet?[...world.podSet]:[],
+    m:moves });
 }
 function restore(str){
   const st = JSON.parse(str);
@@ -688,10 +743,17 @@ function restore(str){
     const t=e[0], x=e[1], y=e[2], z=e[3];
     const o = { type:t, mesh:makeSolid(t,x,y,z), x, y, z };
     if (t==='seed'){ o.hasMoved=!!e[4]; o.rest=e[5]||0; o._lastKey=K(x,y,z); }
+    if (t==='sprout'){ o.fresh=!!e[6]; }
     world.solids.set(K(x,y,z), o);
   }
   world.hero.x=st.h[0]; world.hero.y=st.h[1]; world.hero.z=st.h[2];
+  world.hero.holding = st.hold||null;
   moves = st.m;
+  if (world.podSet){
+    for (const pm of world.podMesh.values()) world.root.remove(pm);
+    world.podSet.clear(); world.podMesh.clear();
+    for (const key of (st.pods||[])){ world.podSet.add(key); const [px,pz]=key.split(',').map(Number); const m=makePod(px,pz); world.root.add(m); world.podMesh.set(key,m); }
+  }
   syncTargets(); snapHeroMesh(); updateHud();
 }
 
@@ -766,10 +828,20 @@ function tryMove(key, pull){
   }
 }
 
-function commit(before, kind){
+function tryPickup(){
+  const h=world.hero;
+  if (h.holding || !world.podSet) return;
+  const key=h.x+','+h.z;
+  if (world.podSet.has(key)){ h.holding='seed'; world.podSet.delete(key);
+    const pm=world.podMesh.get(key); if(pm){ world.root.remove(pm); world.podMesh.delete(key); } }
+}
+function commit(before, kind){          // any turn: move, throw, or wait
   const h = world.hero;
   settle();
   updateRooting();
+  growSprouts();
+  settle();
+  tryPickup();
   history.push(before);
   moves++;
   syncTargets(); updateHud();
@@ -782,9 +854,35 @@ function commit(before, kind){
   h.act = kind || 'walk';
   h.actStart = performance.now();
   anim = true;
-  SFX.play(kind || 'walk');
+  SFX.play(kind==='throw'?'push' : kind==='wait'?'walk' : (kind||'walk'));
   document.getElementById('hint').classList.add('hide');
   checkWin();
+}
+
+function throwLanding(){                 // where a thrown seed would land, or null
+  const h=world.hero, dx=h.face[0], dz=h.face[1];
+  if (!dx && !dz) return null;
+  let lx=h.x, lz=h.z, found=false;
+  for (let i=1;i<=THROW_RANGE;i++){ const cx=h.x+dx*i, cz=h.z+dz*i;
+    if (!inB(cx,cz) || isSolid(cx,h.y,cz)) break;
+    lx=cx; lz=cz; found=true; }
+  if (!found) return null;
+  let ry=h.y; while (ry>0 && !isSolid(lx,ry-1,lz)) ry--;   // fall to the ground
+  return { x:lx, y:ry, z:lz };
+}
+function throwSeed(){
+  if (won || world.hero.holding!=='seed') return;
+  const land = throwLanding();
+  if (!land) return;
+  const before = snapshot();
+  world.hero.holding = null;
+  addSprout(land.x, land.y, land.z, true);
+  commit(before, 'throw');
+}
+function waitTurn(){                     // pass a turn so pillars grow / you ride up
+  if (won) return;
+  const before = snapshot();
+  commit(before, 'wait');
 }
 
 function checkWin(){
@@ -819,6 +917,11 @@ addEventListener('keydown', e=>{
     // if a step is still animating, buffer this one so movement flows continuously
     if (world.hero.moveT < 1) nextMove = { key:map[k], pull:e.shiftKey };
     else tryMove(map[k], e.shiftKey);
+    return;
+  }
+  if (k===' ' || k==='f'){
+    e.preventDefault();
+    if (world.hero.moveT>=1){ if (world.hero.holding==='seed') throwSeed(); else waitTurn(); }
     return;
   }
   if (k==='q'){ orient=(orient+3)%4; }
@@ -919,6 +1022,8 @@ function frame(now){
     } else if (h.act==='climb' && (moving||posing)){    // reach up + step up
       tArmL=tArmR=-2.3; tHipL=0.55; tHipR=0.55; tKneeL=1.0; tKneeR=1.0;
       tBodyY = Math.sin(mt*Math.PI)*0.22;
+    } else if (h.act==='throw' && posing){              // overhand lob
+      tArmR=-2.6; tArmL=-0.5; tLean=0.18;
     } else if (moving){                                 // continuous stride (never resets between chained steps)
       const sw=Math.sin(h.walkPhase||0)*0.6;
       tHipL=sw; tHipR=-sw;
@@ -952,6 +1057,15 @@ function frame(now){
     }
     const pm = document.getElementById('pullmode');
     if (pm) pm.style.opacity = grabbing ? '1' : '0';
+
+    // held seed + throw landing preview
+    if (P.held) P.held.visible = (h.holding==='seed');
+    if (h.holding==='seed'){
+      const land = throwLanding();
+      if (land){ throwMarker.visible=true; throwMarker.position.set(land.x, land.y+0.03, land.z); throwMarker.material.opacity=0.4+Math.sin(now/150)*0.28; }
+      else throwMarker.visible=false;
+    } else throwMarker.visible=false;
+    for (const pmesh of world.podMesh.values()) if (pmesh.children[0]) pmesh.children[0].position.y = 0.16 + Math.sin(now/400 + pmesh.position.x)*0.04;
 
     // gentle exit pulse, swaying foliage, drifting motes
     const t=now/1000;
@@ -1013,6 +1127,7 @@ window.__stonestep = {
   get world(){ return world; },
   load:loadLevel, undo, restart,
   move:(k,p)=>tryMove(k,p),
+  throw:()=>throwSeed(), wait:()=>waitTurn(),
   set level(i){ levelIndex=i; loadLevel(i); },
   get level(){ return levelIndex; },
 };
