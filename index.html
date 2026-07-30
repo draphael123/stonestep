@@ -250,6 +250,8 @@ const matRock   = new THREE.MeshStandardMaterial({ color:'#7b756c', roughness:1.
 const matFern   = new THREE.MeshStandardMaterial({ color:'#4a7d3f', roughness:0.9 });
 const matMush   = new THREE.MeshStandardMaterial({ color:'#e08a58', emissive:'#ff8a3a', emissiveIntensity:0.55, roughness:0.6 });
 const matStem   = new THREE.MeshStandardMaterial({ color:'#ece3cf', roughness:0.85 });
+const matVine   = new THREE.MeshStandardMaterial({ color:'#4c6b3a', roughness:0.9 });
+const matMoss   = new THREE.MeshStandardMaterial({ color:'#5f7a3e', roughness:1.0 });
 const steel  = new THREE.MeshStandardMaterial({ color:'#9aa3b5', metalness:0.55, roughness:0.42 });
 const steelD = new THREE.MeshStandardMaterial({ color:'#6b7488', metalness:0.55, roughness:0.5 });
 const darkM  = new THREE.MeshStandardMaterial({ color:'#22262f', metalness:0.3, roughness:0.7 });
@@ -314,6 +316,8 @@ function makeSolid(type, x,y,z){
   let mesh;
   if (type==='wall'){
     mesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), boxMats(matWall, matWallTop));
+    const moss=new THREE.Mesh(new THREE.CircleGeometry(0.36,7), matMoss); moss.rotation.x=-Math.PI/2; moss.position.y=0.505; moss.rotation.z=Math.random()*6; mesh.add(moss);
+    if (Math.random()<0.5){ const v=makeVine(2+Math.floor(Math.random()*2)); v.position.set((Math.random()-0.5)*0.5,0.5,0.5); mesh.add(v); }
   } else if (type==='rooted'){
     mesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), boxMats(matRooted, matRootTop));
     const sp = new THREE.Mesh(new THREE.ConeGeometry(0.13,0.3,6), matLeaf2); sp.position.y=0.64; mesh.add(sp);
@@ -412,6 +416,17 @@ function makeTuft(){
   g.userData.crown = g; g.userData.sway = 0.10;
   return g;
 }
+function makeVine(len){
+  const g=new THREE.Group();
+  for (let i=0;i<len;i++){ const seg=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.3,4), matVine);
+    seg.position.set(Math.sin(i*0.9)*0.05, -i*0.27-0.15, Math.cos(i*0.7)*0.03); g.add(seg); }
+  for (let i=1;i<len;i+=2){ const lf=new THREE.Mesh(new THREE.ConeGeometry(0.05,0.13,4), matLeaf2);
+    lf.position.set(0.06,-i*0.27,0); lf.rotation.z=0.7; g.add(lf); }
+  g.userData.crown=g; g.userData.sway=0.06;
+  return g;
+}
+function makeMossPatch(){ const m=new THREE.Mesh(new THREE.CircleGeometry(0.34+Math.random()*0.18, 7), matMoss);
+  m.rotation.x=-Math.PI/2; m.position.y=0.001; m.rotation.z=Math.random()*6; return m; }
 function makeRock(rng){ const m=new THREE.Mesh(new THREE.DodecahedronGeometry(0.22+rng()*0.22,0), matRock);
   m.position.y=0.16; m.rotation.set(rng()*3,rng()*3,rng()*3); m.castShadow=true; return m; }
 function makeMushroom(){ const g=new THREE.Group();
@@ -502,6 +517,7 @@ function buildRoom(){
     const t = new THREE.Mesh(new THREE.BoxGeometry(1,0.5,1), ((x+z)&1)?matFloorA:matFloorB);
     t.position.set(x,-0.25,z); t.receiveShadow = true; floor.add(t);
     if (rng()<0.45){ const tuft=makeTuft(); tuft.position.set(x+(rng()-0.5)*0.5,0,z+(rng()-0.5)*0.5); floor.add(tuft); world.swayers.push({node:tuft.userData.crown, amp:0.10}); }
+    if (rng()<0.22){ const mp=makeMossPatch(); mp.position.set(x+(rng()-0.5)*0.4, 0.002, z+(rng()-0.5)*0.4); floor.add(mp); }
   }
   world.root.add(floor);
 
@@ -512,6 +528,11 @@ function buildRoom(){
   mkWall(wx+2*th,H,th, cx, by, z1+0.5+th/2);
   mkWall(th,H,wz, x0-0.5-th/2, by, cz);
   mkWall(th,H,wz, x1+0.5+th/2, by, cz);
+  // vines draping over the border wall into the clearing
+  const topY=H-0.5;
+  const vine=(px,pz)=>{ const v=makeVine(2+Math.floor(rng()*2)); v.position.set(px,topY,pz); world.root.add(v); world.swayers.push({node:v.userData.crown,amp:0.06}); };
+  for (let x=x0;x<=x1;x++){ if(rng()<0.5) vine(x, z0-0.5); if(rng()<0.5) vine(x, z1+0.5); }
+  for (let z=z0;z<=z1;z++){ if(rng()<0.45) vine(x0-0.5, z); if(rng()<0.45) vine(x1+0.5, z); }
 
   // ring of trees just outside (hidden when between camera and the level)
   const R = Math.max(wx,wz)/2 + 1.7;
