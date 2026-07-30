@@ -21,6 +21,7 @@
   .hint { position:fixed; left:50%; bottom:58px; transform:translateX(-50%); max-width:540px; width:calc(100% - 48px); text-align:center; background:rgba(18,16,28,.85); border:1px solid #4a4166; border-radius:11px; padding:13px 20px; color:#e8dcc0; font-size:15px; line-height:1.55; box-shadow:0 8px 28px rgba(0,0,0,.45); transition:opacity .5s ease; }
   .hint b { color:var(--gold); font-weight:normal; }
   .hint.hide { opacity:0; pointer-events:none; }
+  .pullmode { position:fixed; left:50%; top:66px; transform:translateX(-50%); background:rgba(230,180,92,.16); border:1px solid var(--gold); color:var(--gold); border-radius:20px; padding:6px 18px; font-size:13px; opacity:0; transition:opacity .18s; pointer-events:none; text-shadow:0 1px 4px #000; }
   .overlay { position:fixed; inset:0; display:flex; align-items:flex-start; justify-content:center; flex-direction:column; align-items:center; gap:10px; padding-top:9vh; background:radial-gradient(120% 80% at 50% 0%, rgba(9,7,16,.55), rgba(9,7,16,.12) 60%, rgba(9,7,16,0)); color:var(--ink); text-align:center; opacity:0; pointer-events:none; transition:opacity .5s; }
   .overlay.show { opacity:1; pointer-events:auto; }
   .overlay h2 { font-size:30px; font-weight:normal; letter-spacing:3px; }
@@ -61,7 +62,7 @@
   </div>
   <div class="chips">
     <span class="chip"><b>← ↑ ↓ →</b> move</span>
-    <span class="chip"><b>shift</b>+dir pull</span>
+    <span class="chip">hold <b>shift</b>: drag</span>
     <span class="chip"><b>Q</b>/<b>E</b> turn</span>
     <span class="chip"><b>Z</b> undo</span>
     <span class="chip"><b>R</b> restart</span>
@@ -71,6 +72,7 @@
 </div>
 <div class="moves" id="moves">moves 0</div>
 <div class="hint" id="hint"></div>
+<div class="pullmode" id="pullmode">Drag mode — walk and the stone behind you follows</div>
 <div class="overlay" id="win">
   <h2 id="winTitle">CLEARING FOUND</h2>
   <p id="winSub">The way ahead opens.</p>
@@ -85,7 +87,7 @@
     <div class="ctrlgrid">
       <b>← ↑ ↓ →</b><span>move (relative to the view)</span>
       <b>Q / E</b><span>turn the camera</span>
-      <b>Shift + dir</b><span>pull a block</span>
+      <b>Hold Shift</b><span>drag the stone behind you</span>
       <b>Z / R</b><span>undo / restart</span>
     </div>
     <div class="btns">
@@ -117,21 +119,21 @@ import * as THREE from 'three';
 // plane, whose top surface is y = 0). Walls and blocks each fill one cell.
 const LEVELS = [
   {
-    name: 'First step · 1',
-    hint: 'Push the stone to the ledge, then climb up and up to the gate.',
-    // Onboarding: the push -> climb -> climb -> exit loop on one axis.
-    hero: [1, 0, 1],
-    exit: [4, 2, 1],
-    blocks: [[2, 0, 1]],
-    walls: [[4,0,1],[4,1,1]],
-  },
-  {
-    name: 'Foothold · 2',
-    hint: 'The stone is on the wrong side of you. Walk around it, then push it to the ledge and climb.',
+    name: 'Foothold · 1',
+    hint: 'The stone starts on the wrong side of you. Walk around it, then push it to the ledge and climb up.',
     hero: [3, 0, 1],
     exit: [6, 2, 1],
     blocks: [[2, 0, 1]],
     walls: (()=>{ const w=[]; for (const z of [0,1,2]) for (const y of [0,1]) w.push([6,y,z]); return w; })(),
+  },
+  {
+    name: 'Around the pillar · 2',
+    hint: 'A pillar blocks the straight path. Steer the stone the long way around it — up a row, across, and back down — then climb.',
+    bnd: { x0:1, x1:6, z0:0, z1:3 },
+    hero: [1, 0, 2],
+    exit: [6, 2, 2],
+    blocks: [[2, 0, 2]],
+    walls: [[6,0,2],[6,1,2],[4,0,2],[5,0,3]],
   },
   {
     name: 'Turn the corner · 3',
@@ -143,7 +145,7 @@ const LEVELS = [
   },
   {
     name: 'Pull it free · 4',
-    hint: 'This stone is jammed against the wall — you cannot get behind it. Hold Shift and press toward it to PULL it free, then push it to the ledge.',
+    hint: 'This stone is jammed against the wall — you can\'t get behind it to push. Stand beside it, hold Shift, and walk AWAY to drag it free. Then push it to the ledge.',
     bnd: { x0:1, x1:6, z0:1, z1:3 },
     hero: [2, 0, 1],
     exit: [6, 2, 1],
@@ -269,6 +271,8 @@ let levelIndex = 0;
 let history = [];
 let won = false;
 let started = false;
+let shiftHeld = false;      // grab/pull mode indicator
+let nextMove = null;        // buffered move for continuous walking
 
 // ---------- Settings + sound ----------
 const settings = { volume:0.5, reduceMotion:false, invert:false };
@@ -704,16 +708,17 @@ function tryMove(key, pull){
   const before = snapshot();
 
   if (pull){
-    const fx=h.x+dx, fz=h.z+dz;          // block in front
-    const bx=h.x-dx, bz=h.z-dz;          // where hero retreats
-    if (isBlock(fx,h.y,fz) && !isSolid(bx,h.y,bz) && inB(bx,bz) && !sunBlocked(bx,h.y,bz) && supported(bx,h.y,bz)){
-      const blk = world.solids.get(K(fx,h.y,fz));
+    // Drag: walk the way you press; the stone directly BEHIND you follows.
+    const nx=h.x+dx, nz=h.z+dz;          // where the knight walks to
+    const bx=h.x-dx, bz=h.z-dz;          // the stone directly behind him
+    if (isBlock(bx,h.y,bz) && !isSolid(nx,h.y,nz) && inB(nx,nz) && !sunBlocked(nx,h.y,nz) && supported(nx,h.y,nz)){
+      const blk = world.solids.get(K(bx,h.y,bz));
       const ox=h.x, oy=h.y, oz=h.z;
-      h.x=bx; h.z=bz;                    // hero steps back
-      moveSolid(blk, ox,oy,oz);          // block follows
+      h.x=nx; h.z=nz;                    // knight walks forward
+      moveSolid(blk, ox,oy,oz);          // stone follows into his old cell
       commit(before, 'pull'); return;
     }
-    return; // nothing to pull
+    return; // nothing behind to drag
   }
 
   const fx=h.x+dx, fy=h.y, fz=h.z+dz;
@@ -780,17 +785,25 @@ function restart(){ loadLevel(levelIndex); }
 function updateHud(){ document.getElementById('moves').textContent = 'moves '+moves; }
 
 // ---------- Input ----------
+addEventListener('keyup', e=>{ if (e.key==='Shift') shiftHeld=false; });
 addEventListener('keydown', e=>{
+  if (e.key==='Shift') shiftHeld=true;
   if (!started) return;
   if (!document.getElementById('settings').classList.contains('hidden')){ if(e.key==='Escape') document.getElementById('settings').classList.add('hidden'); return; }
   SFX.resume();
   const k = e.key.toLowerCase();
   const map = { arrowup:'up', w:'up', arrowdown:'down', s:'down', arrowleft:'left', a:'left', arrowright:'right', d:'right' };
-  if (map[k]){ e.preventDefault(); tryMove(map[k], e.shiftKey); return; }
+  if (map[k]){
+    e.preventDefault();
+    // if a step is still animating, buffer this one so movement flows continuously
+    if (world.hero.moveT < 1) nextMove = { key:map[k], pull:e.shiftKey };
+    else tryMove(map[k], e.shiftKey);
+    return;
+  }
   if (k==='q'){ orient=(orient+3)%4; }
   if (k==='e'){ orient=(orient+1)%4; }
-  if (k==='z'){ e.preventDefault(); undo(); }
-  if (k==='r'){ restart(); }
+  if (k==='z'){ e.preventDefault(); nextMove=null; undo(); }
+  if (k==='r'){ nextMove=null; restart(); }
 });
 document.getElementById('goNext').addEventListener('click', ()=>{
   document.getElementById('win').classList.remove('show');
@@ -845,6 +858,14 @@ function frame(now){
     } else h.mesh.position.copy(heroTarget);
     if (anim && !moving){ anim=false; if (h.willLand){ h.landAt=now; h.willLand=false; } }
 
+    // chain a buffered step near the end of the current one -> continuous walking
+    if (nextMove && !won && (h.moveT===undefined || h.moveT>=0.72)){
+      const m=nextMove; nextMove=null; tryMove(m.key, m.pull);
+      moving = true;
+    }
+    // continuous walk-cycle phase (keeps striding across chained steps)
+    if (moving) h.walkPhase = (h.walkPhase||0) + dt*9.5;
+
     // ---- knight animation (procedural) ----
     const P = h.mesh.userData.parts;
     const L = (a,b,kk)=>a+(b-a)*kk;
@@ -870,18 +891,19 @@ function frame(now){
     } else if (h.act==='push' && (moving||posing)){     // brace + shove
       tHipL=0.32; tHipR=-0.44; tKneeL=0.28; tKneeR=0.6;
       tArmL=tArmR=-1.5; tLean=0.42;
-    } else if (h.act==='pull' && (moving||posing)){     // lean back, haul
-      tHipL=-0.32; tHipR=0.18; tKneeL=0.18; tKneeR=0.34;
-      tArmL=tArmR=0.85; tLean=-0.24;
+    } else if (h.act==='pull' && (moving||posing)){     // haul: arms back to the stone, lean into the walk, small stride
+      const sw=Math.sin(h.walkPhase||0)*0.32;
+      tHipL=sw-0.08; tHipR=-sw-0.08; tKneeL=Math.max(0,-sw)+0.12; tKneeR=Math.max(0,sw)+0.12;
+      tArmL=tArmR=1.05; tLean=0.30;
     } else if (h.act==='climb' && (moving||posing)){    // reach up + step up
       tArmL=tArmR=-2.3; tHipL=0.55; tHipR=0.55; tKneeL=1.0; tKneeR=1.0;
       tBodyY = Math.sin(mt*Math.PI)*0.22;
-    } else if (moving){                                 // one full stride per step
-      const sp=(moves%2)?1:-1, sw=Math.sin(mt*Math.PI)*0.62*sp;
+    } else if (moving){                                 // continuous stride (never resets between chained steps)
+      const sw=Math.sin(h.walkPhase||0)*0.6;
       tHipL=sw; tHipR=-sw;
       tKneeL=Math.max(0,-sw)*1.4; tKneeR=Math.max(0,sw)*1.4;
       tArmL=-sw*0.8; tArmR=sw*0.8;
-      tBodyY=Math.sin(mt*Math.PI)*0.05;
+      tBodyY=Math.abs(Math.sin(h.walkPhase||0))*0.05;
     } else {
       tBodyY = Math.sin(now/1000*2)*0.02;               // idle breathe
     }
@@ -898,6 +920,17 @@ function frame(now){
     if (h.landAt){ const dl=(now-h.landAt)/1000;
       if (dl<0.18){ const e=Math.sin(dl/0.18*Math.PI); P.body.scale.set(1+e*0.12, 1-e*0.20, 1+e*0.12); }
       else { h.landAt=0; P.body.scale.set(1,1,1); } }
+
+    // grab mode: pulse stones you could drag while Shift is held
+    const grabbing = shiftHeld && started;
+    for (const s of world.solids.values()){
+      if (s.type==='wall' || s.type==='rooted') continue;
+      const adj = (Math.abs(s.x-h.x)+Math.abs(s.z-h.z)===1) && s.y===h.y;
+      const tgt = (grabbing && adj) ? (1.08 + Math.sin(now/110)*0.05) : 1;
+      s.mesh.scale.setScalar(L(s.mesh.scale.x, tgt, 0.3));
+    }
+    const pm = document.getElementById('pullmode');
+    if (pm) pm.style.opacity = grabbing ? '1' : '0';
 
     // gentle exit pulse, swaying foliage, drifting motes
     const t=now/1000;
